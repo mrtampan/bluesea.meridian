@@ -84,16 +84,19 @@ export async function getShyftTokenBalance(walletAddress, tokenMint) {
   }
   const url = `https://api.shyft.to/sol/v1/wallet/token_balance?network=mainnet-beta&wallet=${walletAddress}&token=${tokenMint}`;
   const res = await fetch(url, {
-    headers: {
+    headers: getHeader({
       "x-api-key": SHYFT_KEY,
       "Content-Type": "application/json",
-    },
+    }),
   });
   if (!res.ok) {
     const errText = await res.text().catch(() => "");
     throw new Error(`Shyft token_balance API error: ${res.status} ${errText}`);
   }
   const data = await res.json();
+  if (data.success === false) {
+    throw new Error(`Shyft token_balance API error: ${data.message || "API returned failure"}`);
+  }
   return data.result;
 }
 
@@ -107,10 +110,10 @@ async function getWalletBalancesFromShyft(walletAddress) {
     return { wallet: walletAddress, sol: 0, sol_price: 0, sol_usd: 0, usdc: 0, tokens: [], total_usd: 0, error: "Shyft API key missing" };
   }
 
-  const headers = {
+  const headers = getHeader({
     "x-api-key": SHYFT_KEY,
     "Content-Type": "application/json",
-  };
+  });
 
   try {
     const [solRes, tokensRes] = await Promise.all([
@@ -130,7 +133,14 @@ async function getWalletBalancesFromShyft(walletAddress) {
     const solData = await solRes.json();
     const tokensData = await tokensRes.json();
 
-    const solBalance = solData.result?.balance || 0;
+    if (solData.success === false) {
+      throw new Error(`Shyft balance error: ${solData.message || "API failed"}`);
+    }
+    if (tokensData.success === false) {
+      throw new Error(`Shyft tokens error: ${tokensData.message || "API failed"}`);
+    }
+
+    const solBalance = solData.result?.balance ?? 0;
     const rawTokens = tokensData.result || [];
 
     const mintsToPrice = [config.tokens.SOL, ...rawTokens.map(t => t.address)];
@@ -352,7 +362,12 @@ export async function getWalletBalances() {
 
   const provider = (config.walletApi || process.env.WALLET_API || "helius").toLowerCase();
   if (provider === "shyft") {
-    return getWalletBalancesFromShyft(walletAddress);
+    const shyftResult = await getWalletBalancesFromShyft(walletAddress);
+    if (shyftResult.error) {
+      log("wallet_warn", `Shyft wallet API failed (${shyftResult.error}), falling back to native Solana RPC...`);
+      return getWalletBalancesFromSolana(walletAddress);
+    }
+    return shyftResult;
   }
   if (provider === "solana" || provider === "rpc" || provider === "web3") {
     return getWalletBalancesFromSolana(walletAddress);
