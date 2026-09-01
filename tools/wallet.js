@@ -350,7 +350,7 @@ async function getWalletBalancesFromSolana(walletAddress) {
 }
 
 /**
- * Get current wallet balances: SOL, USDC, and all SPL tokens using configured API provider (Helius, Shyft, or Solana RPC).
+ * Get current wallet balances: SOL, USDC, and all SPL tokens using configured API provider (Helius or Shyft with Solana RPC fallback).
  */
 export async function getWalletBalances() {
   let walletAddress;
@@ -369,10 +369,13 @@ export async function getWalletBalances() {
     }
     return shyftResult;
   }
-  if (provider === "solana" || provider === "rpc" || provider === "web3") {
+
+  const heliusResult = await getWalletBalancesFromHelius(walletAddress);
+  if (heliusResult.error) {
+    log("wallet_warn", `Helius wallet API failed (${heliusResult.error}), falling back to native Solana RPC...`);
     return getWalletBalancesFromSolana(walletAddress);
   }
-  return getWalletBalancesFromHelius(walletAddress);
+  return heliusResult;
 }
 
 /**
