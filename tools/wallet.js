@@ -117,15 +117,23 @@ export async function getWalletBalancesFromBirdeye(walletAddress) {
   });
 
   try {
-    const NATIVE_SOL = config.tokens.SOL;
-    const res = await fetch("https://public-api.birdeye.so/wallet/v2/token-balance", {
-      method: "POST",
+    const NATIVE_SOL = "So11111111111111111111111111111111111111111";
+    let res = await fetch(`https://public-api.birdeye.so/v1/wallet/token_balance?wallet=${walletAddress}`, {
+      method: "GET",
       headers,
-      body: JSON.stringify({
-        wallet: walletAddress,
-        token_addresses: [NATIVE_SOL, config.tokens.USDC],
-      }),
     });
+
+    if (!res.ok) {
+      // Fallback to POST /wallet/v2/token-balance if v1 returns non-200
+      res = await fetch("https://public-api.birdeye.so/wallet/v2/token-balance", {
+        method: "POST",
+        headers,
+        body: JSON.stringify({
+          wallet: walletAddress,
+          token_addresses: [NATIVE_SOL, config.tokens.USDC],
+        }),
+      });
+    }
 
     if (!res.ok) {
       const errText = await res.text().catch(() => "");
@@ -153,8 +161,8 @@ export async function getWalletBalancesFromBirdeye(walletAddress) {
     let usdcBalance = usdcEntry ? (usdcEntry.uiAmount ?? usdcEntry.amount ?? (usdcEntry.balance ? Number(usdcEntry.balance) / Math.pow(10, usdcEntry.decimals ?? 6) : 0)) : 0;
 
     const solUsd = solBalance * solPrice;
-    const enrichedTokens = rawItems.filter(t => (t.address || t.mint) !== NATIVE_SOL && (t.address || t.mint) !== config.tokens.SOL).map(t => {
-      const mint = t.address || t.mint;
+    const enrichedTokens = rawItems.filter(t => t !== solEntry && t !== usdcEntry).map(t => {
+      const mint = t.address || t.mint || "";
       const symbol = t.symbol || (mint === config.tokens.USDC ? "USDC" : mint.slice(0, 8));
       const balance = t.uiAmount ?? t.amount ?? (t.balance ? Number(t.balance) / Math.pow(10, t.decimals ?? 9) : 0);
       const price = t.priceUsd ?? t.price ?? 0;
