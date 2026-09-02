@@ -101,6 +101,128 @@ export async function getShyftTokenBalance(walletAddress, tokenMint) {
 }
 
 /**
+ * Fetch wallet balances using Birdeye Wallet API (GET /v1/wallet/token_list or POST /wallet/v2/token-balance).
+ */
+export async function getWalletBalancesFromBirdeye(walletAddress) {
+  const BIRDEYE_KEY = process.env.BIRDEYE_API_KEY;
+  if (!BIRDEYE_KEY) {
+    log("wallet_error", "BIRDEYE_API_KEY not set in .env");
+    return { wallet: walletAddress, sol: 0, sol_price: 0, sol_usd: 0, usdc: 0, tokens: [], total_usd: 0, error: "Birdeye API key missing" };
+  }
+
+  const headers = getHeader({
+    "X-API-KEY": BIRDEYE_KEY,
+    "x-chain": "solana",
+    "Content-Type": "application/json",
+  });
+
+  try {
+    let res = await fetch(`https://public-api.birdeye.so/v1/wallet/token_list?wallet=${walletAddress}`, { headers });
+    if (!res.ok) {
+      res = await fetch("https://public-api.birdeye.so/wallet/v2/token-balance", {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ wallet: walletAddress }),
+      });
+    }
+
+    if (!res.ok) {
+      const errText = await res.text().catch(() => "");
+      throw new Error(`Birdeye wallet API error: ${res.status} ${errText}`);
+    }
+
+    const data = await res.json();
+    if (data.success === false) {
+      throw new Error(`Birdeye wallet API error: ${data.message || "API returned failure"}`);
+    }
+
+    const rawItems = Array.isArray(data.data?.items)
+      ? data.data.items
+      : Array.isArray(data.data?.tokens)
+      ? data.data.tokens
+      : Array.isArray(data.data)
+      ? data.data
+      : [];
+
+    let solEntry = rawItems.find(t => (t.address || t.mint) === config.tokens.SOL || (t.symbol || "").toUpperCase() === "SOL");
+    let solBalance = solEntry ? (solEntry.uiAmount ?? solEntry.balance ?? solEntry.amount ?? 0) : 0;
+    let solPrice = solEntry ? (solEntry.priceUsd ?? solEntry.price ?? 0) : 0;
+
+    if (!solEntry || solBalance === 0) {
+      try {
+        const connection = getConnection();
+        const solLamports = await connection.getBalance(new PublicKey(walletAddress));
+        solBalance = solLamports / LAMPORTS_PER_SOL;
+      } catch { /* ignore */ }
+    }
+
+    const nonSolTokens = rawItems.filter(t => (t.address || t.mint) !== config.tokens.SOL);
+    const mintsToPrice = [];
+    if (!solPrice) mintsToPrice.push(config.tokens.SOL);
+    for (const t of nonSolTokens) {
+      const mint = t.address || t.mint;
+      const price = t.priceUsd ?? t.price ?? 0;
+      if (mint && !price) mintsToPrice.push(mint);
+    }
+
+    const jupPrices = mintsToPrice.length > 0 ? await fetchJupiterPrices(mintsToPrice) : {};
+    if (!solPrice && jupPrices[config.tokens.SOL]) {
+      solPrice = jupPrices[config.tokens.SOL];
+    }
+
+    const solUsd = solBalance * solPrice;
+    let usdcBalance = 0;
+    let tokensUsdSum = 0;
+
+    const enrichedTokens = nonSolTokens.map(t => {
+      const mint = t.address || t.mint;
+      const symbol = t.symbol || (mint ? mint.slice(0, 8) : "UNKNOWN");
+      const balance = t.uiAmount ?? t.balance ?? t.amount ?? 0;
+      const price = (t.priceUsd ?? t.price ?? 0) || jupPrices[mint] || 0;
+      const usd = (balance > 0 && price > 0) ? Math.round(balance * price * 100) / 100 : (t.valueUsd ?? t.value ?? null);
+
+      if (mint === config.tokens.USDC || symbol === "USDC") {
+        usdcBalance = balance;
+      }
+      if (usd != null) {
+        tokensUsdSum += usd;
+      }
+
+      return {
+        mint,
+        symbol,
+        balance,
+        usd,
+      };
+    });
+
+    const totalUsd = (data.data?.totalUsd || data.data?.walletUsd) ?? (solUsd + tokensUsdSum);
+
+    return {
+      wallet: walletAddress,
+      sol: Math.round(solBalance * 1e6) / 1e6,
+      sol_price: Math.round(solPrice * 100) / 100,
+      sol_usd: Math.round(solUsd * 100) / 100,
+      usdc: Math.round(usdcBalance * 100) / 100,
+      tokens: enrichedTokens,
+      total_usd: Math.round(totalUsd * 100) / 100,
+    };
+  } catch (error) {
+    log("wallet_error", error.message);
+    return {
+      wallet: walletAddress,
+      sol: 0,
+      sol_price: 0,
+      sol_usd: 0,
+      usdc: 0,
+      tokens: [],
+      total_usd: 0,
+      error: error.message,
+    };
+  }
+}
+
+/**
  * Fetch wallet balances using Shyft Wallet API (GET /sol/v1/wallet/balance & GET /sol/v1/wallet/all_tokens).
  */
 async function getWalletBalancesFromShyft(walletAddress) {
@@ -221,7 +343,6 @@ async function getWalletBalancesFromHelius(walletAddress) {
     const data = await res.json();
     const balances = data.balances || [];
 
-    // ─── Find SOL and USDC ────────────────────────────────────
     const solEntry = balances.find(b => b.mint === config.tokens.SOL || b.symbol === "SOL");
     const usdcEntry = balances.find(b => b.mint === config.tokens.USDC || b.symbol === "USDC");
 
@@ -230,7 +351,6 @@ async function getWalletBalancesFromHelius(walletAddress) {
     const solUsd = solEntry?.usdValue || 0;
     const usdcBalance = usdcEntry?.balance || 0;
 
-    // ─── Map all tokens ───────────────────────────────────────
     const enrichedTokens = balances.map(b => ({
       mint: b.mint,
       symbol: b.symbol || b.mint.slice(0, 8),
@@ -326,7 +446,6 @@ async function getWalletBalancesFromSolana(walletAddress) {
 
     return {
       wallet: walletAddress,
-      provider: "solana",
       sol: Math.round(solBalance * 1e6) / 1e6,
       sol_price: Math.round(solPrice * 100) / 100,
       sol_usd: Math.round(solUsd * 100) / 100,
@@ -350,7 +469,7 @@ async function getWalletBalancesFromSolana(walletAddress) {
 }
 
 /**
- * Get current wallet balances: SOL, USDC, and all SPL tokens using configured API provider (Helius or Shyft with Solana RPC fallback).
+ * Get current wallet balances: SOL, USDC, and all SPL tokens using configured API provider (Birdeye, Shyft, or Helius with Solana RPC fallback).
  */
 export async function getWalletBalances() {
   let walletAddress;
@@ -361,6 +480,16 @@ export async function getWalletBalances() {
   }
 
   const provider = (config.walletApi || process.env.WALLET_API || "helius").toLowerCase();
+
+  if (provider === "birdeye") {
+    const birdeyeResult = await getWalletBalancesFromBirdeye(walletAddress);
+    if (birdeyeResult.error) {
+      log("wallet_warn", `Birdeye wallet API failed (${birdeyeResult.error}), falling back to native Solana RPC...`);
+      return getWalletBalancesFromSolana(walletAddress);
+    }
+    return birdeyeResult;
+  }
+
   if (provider === "shyft") {
     const shyftResult = await getWalletBalancesFromShyft(walletAddress);
     if (shyftResult.error) {
