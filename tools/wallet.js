@@ -157,6 +157,11 @@ export async function getWalletBalancesFromBirdeye(walletAddress) {
     let solBalance = solEntry ? (solEntry.uiAmount ?? solEntry.amount ?? (solEntry.balance ? Number(solEntry.balance) / Math.pow(10, solEntry.decimals ?? 9) : 0)) : 0;
     let solPrice = solEntry ? (solEntry.priceUsd ?? solEntry.price ?? 0) : 0;
 
+    if (!solPrice || solPrice <= 0) {
+      const jupPrices = await fetchJupiterPrices([config.tokens.SOL]);
+      solPrice = jupPrices[config.tokens.SOL] || 0;
+    }
+
     let usdcEntry = rawItems.find(t => (t.address || t.mint) === config.tokens.USDC || (t.symbol || "").toUpperCase() === "USDC");
     let usdcBalance = usdcEntry ? (usdcEntry.uiAmount ?? usdcEntry.amount ?? (usdcEntry.balance ? Number(usdcEntry.balance) / Math.pow(10, usdcEntry.decimals ?? 6) : 0)) : 0;
 
