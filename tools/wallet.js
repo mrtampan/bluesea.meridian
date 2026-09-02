@@ -117,13 +117,13 @@ export async function getWalletBalancesFromBirdeye(walletAddress) {
   });
 
   try {
-    const NATIVE_SOL = "So11111111111111111111111111111111111111111";
+    const NATIVE_SOL = config.tokens.SOL;
     const res = await fetch("https://public-api.birdeye.so/wallet/v2/token-balance", {
       method: "POST",
       headers,
       body: JSON.stringify({
         wallet: walletAddress,
-        token_addresses: [NATIVE_SOL, config.tokens.SOL, config.tokens.USDC],
+        token_addresses: [NATIVE_SOL, config.tokens.USDC],
       }),
     });
 
@@ -140,22 +140,14 @@ export async function getWalletBalancesFromBirdeye(walletAddress) {
     const rawItems = Array.isArray(data.data?.items)
       ? data.data.items
       : Array.isArray(data.data?.tokens)
-      ? data.data.tokens
-      : Array.isArray(data.data)
-      ? data.data
-      : [];
+        ? data.data.tokens
+        : Array.isArray(data.data)
+          ? data.data
+          : [];
 
-    let solEntry = rawItems.find(t => (t.address || t.mint) === NATIVE_SOL || (t.address || t.mint) === config.tokens.SOL || (t.symbol || "").toUpperCase() === "SOL");
+    let solEntry = rawItems.find(t => (t.address || t.mint) === NATIVE_SOL || (t.symbol || "").toUpperCase() === "SOL");
     let solBalance = solEntry ? (solEntry.uiAmount ?? solEntry.amount ?? (solEntry.balance ? Number(solEntry.balance) / Math.pow(10, solEntry.decimals ?? 9) : 0)) : 0;
     let solPrice = solEntry ? (solEntry.priceUsd ?? solEntry.price ?? 0) : 0;
-
-    if (solBalance === 0) {
-      throw new Error("Birdeye wallet API returned 0 SOL balance");
-    }
-
-    if (!solPrice || solPrice <= 0) {
-      throw new Error("Birdeye wallet API returned 0 or missing SOL price");
-    }
 
     let usdcEntry = rawItems.find(t => (t.address || t.mint) === config.tokens.USDC || (t.symbol || "").toUpperCase() === "USDC");
     let usdcBalance = usdcEntry ? (usdcEntry.uiAmount ?? usdcEntry.amount ?? (usdcEntry.balance ? Number(usdcEntry.balance) / Math.pow(10, usdcEntry.decimals ?? 6) : 0)) : 0;
