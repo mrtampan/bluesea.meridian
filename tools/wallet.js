@@ -118,22 +118,14 @@ export async function getWalletBalancesFromBirdeye(walletAddress) {
 
   try {
     const NATIVE_SOL = "So11111111111111111111111111111111111111111";
-    let res = await fetch(`https://public-api.birdeye.so/v1/wallet/token_balance?wallet=${walletAddress}`, {
-      method: "GET",
+    const res = await fetch("https://public-api.birdeye.so/wallet/v2/token-balance", {
+      method: "POST",
       headers,
+      body: JSON.stringify({
+        wallet: walletAddress,
+        token_addresses: [NATIVE_SOL, config.tokens.USDC],
+      }),
     });
-
-    if (!res.ok) {
-      // Fallback to POST /wallet/v2/token-balance if v1 returns non-200
-      res = await fetch("https://public-api.birdeye.so/wallet/v2/token-balance", {
-        method: "POST",
-        headers,
-        body: JSON.stringify({
-          wallet: walletAddress,
-          token_addresses: [NATIVE_SOL, config.tokens.USDC],
-        }),
-      });
-    }
 
     if (!res.ok) {
       const errText = await res.text().catch(() => "");
@@ -145,17 +137,17 @@ export async function getWalletBalancesFromBirdeye(walletAddress) {
       throw new Error(`Birdeye wallet API error: ${data.message || "API returned failure"}`);
     }
 
-    const rawItems = Array.isArray(data.data?.items)
+    const rawItems = Array.isArray(data.data)
+      ? data.data
+      : Array.isArray(data.data?.items)
       ? data.data.items
       : Array.isArray(data.data?.tokens)
-        ? data.data.tokens
-        : Array.isArray(data.data)
-          ? data.data
-          : [];
+      ? data.data.tokens
+      : [];
 
     let solEntry = rawItems.find(t => (t.address || t.mint) === NATIVE_SOL || (t.symbol || "").toUpperCase() === "SOL");
-    let solBalance = solEntry ? (solEntry.uiAmount ?? solEntry.amount ?? (solEntry.balance ? Number(solEntry.balance) / Math.pow(10, solEntry.decimals ?? 9) : 0)) : 0;
-    let solPrice = solEntry ? (solEntry.priceUsd ?? solEntry.price ?? 0) : 0;
+    let solBalance = solEntry ? (solEntry.amount ?? solEntry.uiAmount ?? (solEntry.balance ? Number(solEntry.balance) / Math.pow(10, solEntry.decimals ?? 9) : 0)) : 0;
+    let solPrice = solEntry ? (solEntry.price ?? solEntry.priceUsd ?? 0) : 0;
 
     if (!solPrice || solPrice <= 0) {
       const jupPrices = await fetchJupiterPrices([config.tokens.SOL]);
@@ -163,20 +155,22 @@ export async function getWalletBalancesFromBirdeye(walletAddress) {
     }
 
     let usdcEntry = rawItems.find(t => (t.address || t.mint) === config.tokens.USDC || (t.symbol || "").toUpperCase() === "USDC");
-    let usdcBalance = usdcEntry ? (usdcEntry.uiAmount ?? usdcEntry.amount ?? (usdcEntry.balance ? Number(usdcEntry.balance) / Math.pow(10, usdcEntry.decimals ?? 6) : 0)) : 0;
+    let usdcBalance = usdcEntry ? (usdcEntry.amount ?? usdcEntry.uiAmount ?? (usdcEntry.balance ? Number(usdcEntry.balance) / Math.pow(10, usdcEntry.decimals ?? 6) : 0)) : 0;
 
-    const solUsd = solBalance * solPrice;
+    const solUsd = solEntry?.value ? Number(solEntry.value) : (solBalance * solPrice);
+    const usdcPrice = usdcEntry ? (usdcEntry.price ?? usdcEntry.priceUsd ?? 1) : 1;
+    const usdcUsd = usdcEntry?.value ? Number(usdcEntry.value) : (usdcBalance * usdcPrice);
+
     const enrichedTokens = rawItems.filter(t => t !== solEntry && t !== usdcEntry).map(t => {
       const mint = t.address || t.mint || "";
       const symbol = t.symbol || (mint === config.tokens.USDC ? "USDC" : mint.slice(0, 8));
-      const balance = t.uiAmount ?? t.amount ?? (t.balance ? Number(t.balance) / Math.pow(10, t.decimals ?? 9) : 0);
-      const price = t.priceUsd ?? t.price ?? 0;
-      const usd = (balance > 0 && price > 0) ? Math.round(balance * price * 100) / 100 : (t.valueUsd ?? t.value ?? null);
+      const balance = t.amount ?? t.uiAmount ?? (t.balance ? Number(t.balance) / Math.pow(10, t.decimals ?? 9) : 0);
+      const price = t.price ?? t.priceUsd ?? 0;
+      const usd = t.value != null ? Number(t.value) : ((balance > 0 && price > 0) ? Math.round(balance * price * 100) / 100 : null);
       return { mint, symbol, balance, usd };
     });
 
-    const usdcPrice = usdcEntry?.priceUsd ?? usdcEntry?.price ?? 1;
-    const totalUsd = solUsd + (usdcBalance * usdcPrice);
+    const totalUsd = solUsd + usdcUsd + enrichedTokens.reduce((sum, t) => sum + (t.usd || 0), 0);
 
     return {
       wallet: walletAddress,
