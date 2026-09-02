@@ -117,12 +117,13 @@ export async function getWalletBalancesFromBirdeye(walletAddress) {
   });
 
   try {
+    const NATIVE_SOL = "So11111111111111111111111111111111111111111";
     const res = await fetch("https://public-api.birdeye.so/wallet/v2/token-balance", {
       method: "POST",
       headers,
       body: JSON.stringify({
         wallet: walletAddress,
-        token_addresses: [config.tokens.SOL, config.tokens.USDC],
+        token_addresses: [NATIVE_SOL, config.tokens.SOL, config.tokens.USDC],
       }),
     });
 
@@ -144,25 +145,26 @@ export async function getWalletBalancesFromBirdeye(walletAddress) {
       ? data.data
       : [];
 
-    let solEntry = rawItems.find(t => (t.address || t.mint) === config.tokens.SOL || (t.symbol || "").toUpperCase() === "SOL");
-    let solBalance = solEntry ? (solEntry.uiAmount ?? solEntry.balance ?? solEntry.amount ?? 0) : 0;
+    let solEntry = rawItems.find(t => (t.address || t.mint) === NATIVE_SOL || (t.address || t.mint) === config.tokens.SOL || (t.symbol || "").toUpperCase() === "SOL");
+    let solBalance = solEntry ? (solEntry.uiAmount ?? solEntry.amount ?? (solEntry.balance ? Number(solEntry.balance) / Math.pow(10, solEntry.decimals ?? 9) : 0)) : 0;
     let solPrice = solEntry ? (solEntry.priceUsd ?? solEntry.price ?? 0) : 0;
 
-    let usdcEntry = rawItems.find(t => (t.address || t.mint) === config.tokens.USDC || (t.symbol || "").toUpperCase() === "USDC");
-    let usdcBalance = usdcEntry ? (usdcEntry.uiAmount ?? usdcEntry.balance ?? usdcEntry.amount ?? 0) : 0;
-
-    const mintsToPrice = [];
-    if (!solPrice) mintsToPrice.push(config.tokens.SOL);
-    const jupPrices = mintsToPrice.length > 0 ? await fetchJupiterPrices(mintsToPrice) : {};
-    if (!solPrice && jupPrices[config.tokens.SOL]) {
-      solPrice = jupPrices[config.tokens.SOL];
+    if (solBalance === 0) {
+      throw new Error("Birdeye wallet API returned 0 SOL balance");
     }
 
+    if (!solPrice || solPrice <= 0) {
+      throw new Error("Birdeye wallet API returned 0 or missing SOL price");
+    }
+
+    let usdcEntry = rawItems.find(t => (t.address || t.mint) === config.tokens.USDC || (t.symbol || "").toUpperCase() === "USDC");
+    let usdcBalance = usdcEntry ? (usdcEntry.uiAmount ?? usdcEntry.amount ?? (usdcEntry.balance ? Number(usdcEntry.balance) / Math.pow(10, usdcEntry.decimals ?? 6) : 0)) : 0;
+
     const solUsd = solBalance * solPrice;
-    const enrichedTokens = rawItems.filter(t => (t.address || t.mint) !== config.tokens.SOL).map(t => {
+    const enrichedTokens = rawItems.filter(t => (t.address || t.mint) !== NATIVE_SOL && (t.address || t.mint) !== config.tokens.SOL).map(t => {
       const mint = t.address || t.mint;
       const symbol = t.symbol || (mint === config.tokens.USDC ? "USDC" : mint.slice(0, 8));
-      const balance = t.uiAmount ?? t.balance ?? t.amount ?? 0;
+      const balance = t.uiAmount ?? t.amount ?? (t.balance ? Number(t.balance) / Math.pow(10, t.decimals ?? 9) : 0);
       const price = t.priceUsd ?? t.price ?? 0;
       const usd = (balance > 0 && price > 0) ? Math.round(balance * price * 100) / 100 : (t.valueUsd ?? t.value ?? null);
       return { mint, symbol, balance, usd };
