@@ -443,7 +443,99 @@ async function getWalletBalancesFromSolana(walletAddress) {
 }
 
 /**
- * Get current wallet balances: SOL, USDC, and all SPL tokens using configured API provider (Birdeye, Shyft, or Helius with Solana RPC fallback).
+ * Fetch wallet balances using Alchemy Solana RPC (connection.getBalance / getParsedTokenAccountsByOwner).
+ */
+export async function getWalletBalancesFromAlchemy(walletAddress) {
+  const ALCHEMY_RPC = process.env.ALCHEMY_RPC_WALLET;
+  if (!ALCHEMY_RPC) {
+    log("wallet_error", "ALCHEMY_RPC_WALLET not set in .env");
+    return { wallet: walletAddress, sol: 0, sol_price: 0, sol_usd: 0, usdc: 0, tokens: [], total_usd: 0, error: "Alchemy RPC URL missing" };
+  }
+
+  try {
+    const connection = new Connection(ALCHEMY_RPC, "confirmed");
+    const pubKey = new PublicKey(walletAddress);
+
+    const [solLamports, tokenAccountsResult] = await Promise.all([
+      connection.getBalance(pubKey),
+      connection.getParsedTokenAccountsByOwner(pubKey, {
+        programId: new PublicKey("TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"),
+      }),
+    ]);
+
+    const solBalance = solLamports / LAMPORTS_PER_SOL;
+
+    const rawTokens = [];
+    if (tokenAccountsResult?.value) {
+      for (const item of tokenAccountsResult.value) {
+        const parsedInfo = item.account?.data?.parsed?.info;
+        if (!parsedInfo) continue;
+        const mint = parsedInfo.mint;
+        const balance = parsedInfo.tokenAmount?.uiAmount || 0;
+        if (balance > 0) {
+          rawTokens.push({ mint, balance });
+        }
+      }
+    }
+
+    const mintsToPrice = [config.tokens.SOL, ...rawTokens.map(t => t.mint)];
+    const prices = await fetchJupiterPrices(mintsToPrice);
+
+    const solPrice = prices[config.tokens.SOL] || 0;
+    const solUsd = solBalance * solPrice;
+
+    let usdcBalance = 0;
+    let tokensUsdSum = 0;
+
+    const enrichedTokens = rawTokens.map(t => {
+      const mint = t.mint;
+      const balance = t.balance;
+      const price = prices[mint] || 0;
+      const usd = (balance > 0 && price > 0) ? Math.round(balance * price * 100) / 100 : null;
+
+      if (mint === config.tokens.USDC) {
+        usdcBalance = balance;
+      }
+      if (usd != null) {
+        tokensUsdSum += usd;
+      }
+
+      return {
+        mint,
+        symbol: mint.slice(0, 8),
+        balance,
+        usd,
+      };
+    });
+
+    const totalUsd = solUsd + tokensUsdSum;
+
+    return {
+      wallet: walletAddress,
+      sol: Math.round(solBalance * 1e6) / 1e6,
+      sol_price: Math.round(solPrice * 100) / 100,
+      sol_usd: Math.round(solUsd * 100) / 100,
+      usdc: Math.round(usdcBalance * 100) / 100,
+      tokens: enrichedTokens,
+      total_usd: Math.round(totalUsd * 100) / 100,
+    };
+  } catch (error) {
+    log("wallet_error", error.message);
+    return {
+      wallet: walletAddress,
+      sol: 0,
+      sol_price: 0,
+      sol_usd: 0,
+      usdc: 0,
+      tokens: [],
+      total_usd: 0,
+      error: error.message,
+    };
+  }
+}
+
+/**
+ * Get current wallet balances: SOL, USDC, and all SPL tokens using configured API provider (Birdeye, Shyft, Helius, or Alchemy with Solana RPC fallback).
  */
 export async function getWalletBalances() {
   let walletAddress;
@@ -454,6 +546,15 @@ export async function getWalletBalances() {
   }
 
   const provider = (config.walletApi || process.env.WALLET_API || "helius").toLowerCase();
+
+  if (provider === "alchemy") {
+    const alchemyResult = await getWalletBalancesFromAlchemy(walletAddress);
+    if (alchemyResult.error) {
+      log("wallet_warn", `Alchemy wallet API failed (${alchemyResult.error}), falling back to native Solana RPC...`);
+      return getWalletBalancesFromSolana(walletAddress);
+    }
+    return alchemyResult;
+  }
 
   if (provider === "birdeye") {
     const birdeyeResult = await getWalletBalancesFromBirdeye(walletAddress);
@@ -480,6 +581,7 @@ export async function getWalletBalances() {
   }
   return heliusResult;
 }
+
 
 /**
  * Swap tokens via Jupiter Swap API V2 (order → sign → execute).
