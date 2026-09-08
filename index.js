@@ -1028,6 +1028,7 @@ function settingValue(key) {
     solMode: config.management.solMode,
     lpAgentRelayEnabled: config.api.lpAgentRelayEnabled,
     chartIndicatorsEnabled: config.indicators.enabled,
+    chartIndicatorConfirmPrompt: config.chartIndicatorConfirmPrompt,
     trailingTakeProfit: config.management.trailingTakeProfit,
     useDiscordSignals: config.screening.useDiscordSignals,
     blockPvpSymbols: config.screening.blockPvpSymbols,

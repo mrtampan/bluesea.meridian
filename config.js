@@ -263,6 +263,7 @@ export const config = {
     rsiOverbought: indicatorUserConfig.rsiOverbought ?? 80,
     requireAllIntervals: indicatorUserConfig.requireAllIntervals ?? false,
   },
+  chartIndicatorConfirmPrompt: u.chartIndicatorConfirmPrompt ?? false,
   walletApi: (u.walletApi || process.env.WALLET_API || "helius").toLowerCase(),
 };
 
@@ -324,6 +325,7 @@ export function reloadScreeningThresholds() {
     if (fresh.maxBotHoldersPct != null) s.maxBotHoldersPct = fresh.maxBotHoldersPct;
     if (fresh.allowedLaunchpads !== undefined) s.allowedLaunchpads = fresh.allowedLaunchpads;
     if (fresh.blockedLaunchpads !== undefined) s.blockedLaunchpads = fresh.blockedLaunchpads;
+    if (fresh.chartIndicatorConfirmPrompt !== undefined) config.chartIndicatorConfirmPrompt = fresh.chartIndicatorConfirmPrompt;
     const minBinsBelow = numericConfig(fresh.minBinsBelow) ?? config.strategy.minBinsBelow;
     const maxBinsBelow = numericConfig(fresh.maxBinsBelow) ?? numericConfig(fresh.binsBelow) ?? config.strategy.maxBinsBelow;
     const defaultBinsBelow = numericConfig(fresh.defaultBinsBelow) ?? numericConfig(fresh.binsBelow) ?? config.strategy.defaultBinsBelow ?? maxBinsBelow;

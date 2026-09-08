@@ -1,4 +1,5 @@
 import { discoverPools, getPoolDetail, getTopCandidates } from "./screening.js";
+import { confirmIndicatorPreset } from "./chart-indicators.js";
 import {
   getActiveBin,
   deployPosition,
@@ -164,7 +165,21 @@ async function validateDeployPoolThresholds(args) {
     };
   }
 
-  const baseMint = detail?.token_x?.address || detail?.base_token_address || null;
+  const baseMint = detail?.token_x?.address || detail?.base_token_address || args.base_mint || null;
+
+  if (config.chartIndicatorConfirmPrompt && baseMint) {
+    try {
+      const confirmation = await confirmIndicatorPreset({ mint: baseMint, side: "entry" });
+      if (confirmation && confirmation.confirmed === false && !confirmation.skipped) {
+        return {
+          pass: false,
+          reason: `Chart indicators enabled (${config.indicators.entryPreset} on ${(Array.isArray(config.indicators.intervals) ? config.indicators.intervals : [config.indicators.intervals]).join(", ")}), but entry signal for token ${baseMint.slice(0, 8)}... was rejected: ${confirmation.reason}`,
+        };
+      }
+    } catch (error) {
+      // Pre-deploy indicator check warning ignored
+    }
+  }
   const entryMarketData = {
     entry_mcap: numberOrNull(detail?.token_x?.market_cap ?? detail?.base_token_market_cap),
     entry_tvl: tvl,
