@@ -46,6 +46,9 @@
 
   "minClaimAmount": 5,
   "autoSwapAfterClaim": false,
+  "autoSweepResidualTokens": true,
+  "minAutoSweepUsd": 0.50,
+  "maxAutoSweepFailures": 3,
   "outOfRangeBinsToClose": 10,
   "outOfRangeWaitMinutes": 30,
   "oorCooldownTriggerCount": 3,

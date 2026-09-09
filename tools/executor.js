@@ -316,11 +316,11 @@ const toolMap = {
   },
   get_performance_history: getPerformanceHistory,
   get_recent_decisions: ({ limit } = {}) => ({ decisions: getRecentDecisions(limit || 6) }),
-  add_strategy:        addStrategy,
-  list_strategies:     listStrategies,
-  get_strategy:        getStrategy,
+  add_strategy: addStrategy,
+  list_strategies: listStrategies,
+  get_strategy: getStrategy,
   set_active_strategy: setActiveStrategy,
-  remove_strategy:     removeStrategy,
+  remove_strategy: removeStrategy,
   get_pool_memory: getPoolMemory,
   add_pool_note: addPoolNote,
   add_to_blacklist: addToBlacklist,
@@ -333,7 +333,7 @@ const toolMap = {
     addLesson(rule, tags || [], { pinned: !!pinned, role: role || null });
     return { saved: true, rule, pinned: !!pinned, role: role || "all" };
   },
-  pin_lesson:   ({ id }) => pinLesson(id),
+  pin_lesson: ({ id }) => pinLesson(id),
   unpin_lesson: ({ id }) => unpinLesson(id),
   list_lessons: ({ role, pinned, tag, limit } = {}) => listLessons({ role, pinned, tag, limit }),
   clear_lessons: ({ mode, keyword }) => {
@@ -627,7 +627,8 @@ async function swapBaseToSolWithRetry(baseMint, label) {
     try {
       const balances = await getWalletBalances({});
       const token = balances.tokens?.find((t) => t.mint === baseMint);
-      if (!token || token.usd < 0.10) {
+      const usdVal = Number(token?.usd ?? 0);
+      if (!token || usdVal < 0.10) {
         // Nothing left to swap (already sold or dust) — treat as done.
         return { swapped: attempt > 1, result: null, token: null };
       }
@@ -645,6 +646,57 @@ async function swapBaseToSolWithRetry(baseMint, label) {
   log("executor_warn", `Auto-swap ${label} failed after ${attempts} attempts — base token left unsold (${baseMint.slice(0, 8)})`);
   return { swapped: false, result: null, token: null };
 }
+
+// Track consecutive failed sweep attempts per token mint so unswappable/dead tokens don't loop endlessly
+const residualSweepFailures = new Map();
+
+/**
+ * Sweep leftover non-SOL tokens in wallet back to SOL.
+ * Runs during management cycle when config.management.autoSweepResidualTokens is true.
+ */
+export async function sweepResidualTokens() {
+  if (!config.management.autoSweepResidualTokens) return [];
+  const minUsd = Math.max(0.10, Number(config.management.minAutoSweepUsd ?? 0.50));
+  const maxFailures = Math.max(1, Number(config.management.maxAutoSweepFailures ?? 3));
+  const SOL_MINT = "So11111111111111111111111111111111111111112";
+
+  const balances = await getWalletBalances({}).catch((e) => {
+    log("executor_warn", `Residual sweep balance fetch failed: ${e.message}`);
+    return null;
+  });
+
+  if (!balances || !Array.isArray(balances.tokens) || balances.tokens.length === 0) {
+    return [];
+  }
+
+  const swept = [];
+  for (const token of balances.tokens) {
+    if (!token.mint || token.mint === SOL_MINT || token.mint === "SOL") continue;
+    if (token.symbol === "USDC" || token.symbol === "USDT") continue;
+
+    const usdVal = Number(token.usd ?? 0);
+    if (usdVal < minUsd) continue;
+
+    const failedCount = residualSweepFailures.get(token.mint) || 0;
+    if (failedCount >= maxFailures) {
+      log("executor_warn", `Skipping residual sweep for ${token.symbol || token.mint.slice(0, 8)}: failed ${failedCount} consecutive cycles`);
+      continue;
+    }
+
+    log("executor", `Residual sweep detected leftover token ${token.symbol || token.mint.slice(0, 8)} ($${usdVal.toFixed(2)}) — attempting swap to SOL`);
+    const { swapped } = await swapBaseToSolWithRetry(token.mint, "residual sweep");
+
+    if (swapped) {
+      residualSweepFailures.delete(token.mint);
+      swept.push({ mint: token.mint, symbol: token.symbol, usd: usdVal });
+    } else {
+      residualSweepFailures.set(token.mint, failedCount + 1);
+    }
+  }
+
+  return swept;
+}
+
 
 /**
  * Execute a tool call with safety checks and logging.
@@ -691,15 +743,15 @@ export async function executeTool(name, args) {
 
     if (success) {
       if (name === "swap_token" && result.tx) {
-        notifySwap({ inputSymbol: args.input_mint?.slice(0, 8), outputSymbol: args.output_mint === "So11111111111111111111111111111111111111112" || args.output_mint === "SOL" ? "SOL" : args.output_mint?.slice(0, 8), amountIn: result.amount_in, amountOut: result.amount_out, tx: result.tx }).catch(() => {});
+        notifySwap({ inputSymbol: args.input_mint?.slice(0, 8), outputSymbol: args.output_mint === "So11111111111111111111111111111111111111112" || args.output_mint === "SOL" ? "SOL" : args.output_mint?.slice(0, 8), amountIn: result.amount_in, amountOut: result.amount_out, tx: result.tx }).catch(() => { });
       } else if (name === "deploy_position") {
-        notifyDeploy({ pair: result.pool_name || args.pool_name || args.pool_address?.slice(0, 8), amountSol: args.amount_y ?? args.amount_sol ?? 0, position: result.position, tx: result.txs?.[0] ?? result.tx, priceRange: result.price_range, rangeCoverage: result.range_coverage, binStep: result.bin_step, baseFee: result.base_fee }).catch(() => {});
+        notifyDeploy({ pair: result.pool_name || args.pool_name || args.pool_address?.slice(0, 8), amountSol: args.amount_y ?? args.amount_sol ?? 0, position: result.position, tx: result.txs?.[0] ?? result.tx, priceRange: result.price_range, rangeCoverage: result.range_coverage, binStep: result.bin_step, baseFee: result.base_fee }).catch(() => { });
       } else if (name === "close_position") {
-        notifyClose({ pair: result.pool_name || args.position_address?.slice(0, 8), pnlUsd: result.pnl_usd ?? 0, pnlPct: result.pnl_pct ?? 0 }).catch(() => {});
+        notifyClose({ pair: result.pool_name || args.position_address?.slice(0, 8), pnlUsd: result.pnl_usd ?? 0, pnlPct: result.pnl_pct ?? 0 }).catch(() => { });
         // Note low-yield closes in pool memory so screener avoids redeploying
         if (args.reason && args.reason.toLowerCase().includes("yield")) {
           const poolAddr = result.pool || args.pool_address;
-          if (poolAddr) addPoolNote({ pool_address: poolAddr, note: `Closed: low yield (fee/TVL below threshold) at ${new Date().toISOString().slice(0,10)}` }).catch?.(() => {});
+          if (poolAddr) addPoolNote({ pool_address: poolAddr, note: `Closed: low yield (fee/TVL below threshold) at ${new Date().toISOString().slice(0, 10)}` }).catch?.(() => { });
         }
         // Auto-swap base token back to SOL unless user said to hold (retried).
         if (!args.skip_swap && result.base_mint) {

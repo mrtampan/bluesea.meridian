@@ -10,7 +10,7 @@ import { getWalletBalances } from "./tools/wallet.js";
 import { getTopCandidates, degenScore } from "./tools/screening.js";
 import { config, reloadScreeningThresholds, computeDeployAmount } from "./config.js";
 import { evolveThresholds, getPerformanceSummary } from "./lessons.js";
-import { executeTool, registerCronRestarter } from "./tools/executor.js";
+import { executeTool, registerCronRestarter, sweepResidualTokens } from "./tools/executor.js";
 import {
   startPolling,
   stopPolling,
@@ -236,6 +236,7 @@ export async function runManagementCycle({ silent = false } = {}) {
     positions = livePositions?.positions || [];
 
     if (positions.length === 0) {
+      await sweepResidualTokens().catch((e) => log("cron_warn", `Residual token sweep failed: ${e.message}`));
       log("cron", "No open positions — triggering screening cycle");
       mgmtReport = "No open positions. Triggering screening cycle.";
       runScreeningCycle().catch((e) => log("cron_error", `Triggered screening failed: ${e.message}`));
@@ -329,6 +330,9 @@ export async function runManagementCycle({ silent = false } = {}) {
       log("cron", "Management: all positions STAY — skipping");
       await liveMessage?.note("No tool actions needed.");
     }
+
+    // Residual token auto-sweep (sweeps unsold non-SOL tokens left in wallet)
+    await sweepResidualTokens().catch((e) => log("cron_warn", `Residual token sweep failed: ${e.message}`));
 
     // Trigger screening after management
     const afterPositions = await getMyPositions({ force: true }).catch(() => null);

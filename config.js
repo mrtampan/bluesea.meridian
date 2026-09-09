@@ -107,6 +107,9 @@ export const config = {
     autoSwapAfterClaim: u.autoSwapAfterClaim ?? false,
     autoSwapRetryAttempts: u.autoSwapRetryAttempts ?? 3,    // retries for base→SOL auto-swap on Jupiter failure
     autoSwapRetryDelayMs: u.autoSwapRetryDelayMs ?? 3000, // delay between auto-swap retries
+    autoSweepResidualTokens: u.autoSweepResidualTokens ?? true, // periodic check & swap non-SOL tokens in management cycle
+    minAutoSweepUsd: u.minAutoSweepUsd ?? 0.50, // minimum USD value of leftover token to trigger sweep
+    maxAutoSweepFailures: u.maxAutoSweepFailures ?? 3, // max consecutive failed sweep cycles per token mint
     outOfRangeBinsToClose: u.outOfRangeBinsToClose ?? 10,
     outOfRangeWaitMinutes: u.outOfRangeWaitMinutes ?? 30,
     oorCooldownTriggerCount: u.oorCooldownTriggerCount ?? 3,
