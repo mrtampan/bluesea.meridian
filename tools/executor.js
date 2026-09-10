@@ -652,10 +652,14 @@ const residualSweepFailures = new Map();
 
 /**
  * Sweep leftover non-SOL tokens in wallet back to SOL.
- * Runs during management cycle when config.management.autoSweepResidualTokens is true.
+ * Runs during management cycle when config.management.autoSweepResidualTokens is true,
+ * or manually when forced.
  */
-export async function sweepResidualTokens() {
-  if (!config.management.autoSweepResidualTokens) return [];
+export async function sweepResidualTokens({ force = false } = {}) {
+  const autoSweepEnabled = !!config.management.autoSweepResidualTokens;
+  if (!force && !autoSweepEnabled) {
+    return { swept: [], skipped: [], failed: [], totalChecked: 0, autoSweepEnabled };
+  }
   const minUsd = Math.max(0.10, Number(config.management.minAutoSweepUsd ?? 0.50));
   const maxFailures = Math.max(1, Number(config.management.maxAutoSweepFailures ?? 3));
   const SOL_MINT = "So11111111111111111111111111111111111111112";
@@ -666,35 +670,65 @@ export async function sweepResidualTokens() {
   });
 
   if (!balances || !Array.isArray(balances.tokens) || balances.tokens.length === 0) {
-    return [];
+    return { swept: [], skipped: [], failed: [], totalChecked: 0, autoSweepEnabled };
   }
 
   const swept = [];
+  const skipped = [];
+  const failed = [];
+  let totalChecked = 0;
+
   for (const token of balances.tokens) {
     if (!token.mint || token.mint === SOL_MINT || token.mint === "SOL") continue;
     if (token.symbol === "USDC" || token.symbol === "USDT") continue;
 
+    totalChecked++;
     const usdVal = Number(token.usd ?? 0);
-    if (usdVal < minUsd) continue;
+    if (usdVal < minUsd) {
+      skipped.push({
+        mint: token.mint,
+        symbol: token.symbol,
+        usd: usdVal,
+        reason: `Value ($${usdVal.toFixed(2)}) below minimum threshold ($${minUsd.toFixed(2)})`,
+      });
+      continue;
+    }
 
     const failedCount = residualSweepFailures.get(token.mint) || 0;
-    if (failedCount >= maxFailures) {
+    if (!force && failedCount >= maxFailures) {
       log("executor_warn", `Skipping residual sweep for ${token.symbol || token.mint.slice(0, 8)}: failed ${failedCount} consecutive cycles`);
+      skipped.push({
+        mint: token.mint,
+        symbol: token.symbol,
+        usd: usdVal,
+        reason: `Failed ${failedCount} consecutive cycles (max ${maxFailures})`,
+      });
       continue;
     }
 
     log("executor", `Residual sweep detected leftover token ${token.symbol || token.mint.slice(0, 8)} ($${usdVal.toFixed(2)}) — attempting swap to SOL`);
-    const { swapped } = await swapBaseToSolWithRetry(token.mint, "residual sweep");
+    const { swapped, result } = await swapBaseToSolWithRetry(token.mint, "residual sweep");
 
     if (swapped) {
       residualSweepFailures.delete(token.mint);
-      swept.push({ mint: token.mint, symbol: token.symbol, usd: usdVal });
+      swept.push({
+        mint: token.mint,
+        symbol: token.symbol,
+        usd: usdVal,
+        tx: result?.tx || result?.amount_out || null,
+      });
     } else {
       residualSweepFailures.set(token.mint, failedCount + 1);
+      failed.push({
+        mint: token.mint,
+        symbol: token.symbol,
+        usd: usdVal,
+        error: "Swap failed or returned no transaction",
+      });
     }
   }
 
-  return swept;
+  return { swept, skipped, failed, totalChecked, autoSweepEnabled };
 }
 
 

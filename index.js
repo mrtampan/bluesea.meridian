@@ -1290,6 +1290,7 @@ function formatHelpText() {
     "/briefing — morning briefing",
     "/hive — HiveMind sync status",
     "/hive pull — manual HiveMind pull now",
+    "/sweep — manual residual token sweep to SOL",
     "/pause — stop cron cycles",
     "/resume — start cron cycles again",
     "/stop — shut down agent",
@@ -1600,6 +1601,44 @@ async function telegramHandler(msg) {
     return;
   }
 
+  if (text === "/sweep" || text.startsWith("/sweep")) {
+    try {
+      await sendMessage("🧹 Running residual token sweep...");
+      const result = await sweepResidualTokens({ force: true });
+      const { swept, skipped, failed, totalChecked, autoSweepEnabled } = result;
+      let msg = `<b>Residual Token Sweep Results</b>\nAuto-sweep config: ${autoSweepEnabled ? "enabled" : "disabled (forced run)"}\nChecked: ${totalChecked} non-SOL token(s)\n\n`;
+
+      if (swept.length === 0 && skipped.length === 0 && failed.length === 0) {
+        msg += "No residual tokens found in wallet.";
+      } else {
+        if (swept.length > 0) {
+          msg += `✅ <b>Swept (${swept.length}):</b>\n`;
+          for (const s of swept) {
+            msg += `• ${s.symbol || s.mint.slice(0, 8)} ($${s.usd.toFixed(2)})\n`;
+          }
+          msg += "\n";
+        }
+        if (skipped.length > 0) {
+          msg += `⚠️ <b>Skipped (${skipped.length}):</b>\n`;
+          for (const s of skipped) {
+            msg += `• ${s.symbol || s.mint.slice(0, 8)} ($${s.usd.toFixed(2)}) — ${s.reason}\n`;
+          }
+          msg += "\n";
+        }
+        if (failed.length > 0) {
+          msg += `❌ <b>Failed (${failed.length}):</b>\n`;
+          for (const f of failed) {
+            msg += `• ${f.symbol || f.mint.slice(0, 8)} ($${f.usd.toFixed(2)}) — ${f.error}\n`;
+          }
+        }
+      }
+      await sendHTML(msg);
+    } catch (e) {
+      await sendMessage(`Sweep error: ${e.message}`).catch(() => {});
+    }
+    return;
+  }
+
   if (text === "/pause") {
     stopCronJobs();
     cronStarted = false;
@@ -1820,6 +1859,7 @@ Commands:
   /status        Refresh wallet + positions
   /candidates    Refresh top pool list
   /briefing      Show morning briefing (last 24h)
+  /sweep         Manually sweep residual non-SOL tokens to SOL
   /learn         Study top LPers from the best current pool and save lessons
   /learn <addr>  Study top LPers from a specific pool address
   /thresholds    Show current screening thresholds + performance stats
@@ -1877,6 +1917,35 @@ Commands:
 
     // ── Slash commands ───────────────────────
     if (input === "/stop") { await shutdown("user command"); return; }
+
+    if (input === "/sweep" || input === "sweep") {
+      await runBusy(async () => {
+        console.log("\nRunning residual token sweep...\n");
+        const result = await sweepResidualTokens({ force: true });
+        const { swept, skipped, failed, totalChecked, autoSweepEnabled } = result;
+        console.log(`Auto-sweep config: ${autoSweepEnabled ? "enabled" : "disabled (forced run)"}`);
+        console.log(`Checked: ${totalChecked} token(s)\n`);
+
+        if (!swept.length && !skipped.length && !failed.length) {
+          console.log("No residual tokens found in wallet.\n");
+        } else {
+          if (swept.length) {
+            console.log(`Swept (${swept.length}):`);
+            for (const s of swept) console.log(`  ✓ ${s.symbol || s.mint.slice(0, 8)} ($${s.usd.toFixed(2)})`);
+          }
+          if (skipped.length) {
+            console.log(`\nSkipped (${skipped.length}):`);
+            for (const s of skipped) console.log(`  - ${s.symbol || s.mint.slice(0, 8)} ($${s.usd.toFixed(2)}) — ${s.reason}`);
+          }
+          if (failed.length) {
+            console.log(`\nFailed (${failed.length}):`);
+            for (const f of failed) console.log(`  ✗ ${f.symbol || f.mint.slice(0, 8)} ($${f.usd.toFixed(2)}) — ${f.error}`);
+          }
+          console.log();
+        }
+      });
+      return;
+    }
 
     if (input === "/status") {
       await runBusy(async () => {
