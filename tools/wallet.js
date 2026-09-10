@@ -25,7 +25,7 @@ function getWallet() {
   return _wallet;
 }
 
-const JUPITER_PRICE_API = "https://api.jup.ag/price/v3";
+// const JUPITER_PRICE_API = "https://api.jup.ag/price/v3";
 const JUPITER_SWAP_V2_API = "https://api.jup.ag/swap/v2";
 const DEFAULT_JUPITER_API_KEY = "b15d42e9-e0e4-4f90-a424-ae41ceeaa382";
 
@@ -52,26 +52,136 @@ function getJupiterReferralParams() {
   return { referralAccount, referralFee: Math.round(referralFee) };
 }
 
-async function fetchJupiterPrices(mints) {
+const TOKEN_PROGRAM_ID = new PublicKey("TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA");
+const TOKEN_2022_PROGRAM_ID = new PublicKey("TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb");
+
+export function parseTokenBalance(tokenAmount) {
+  if (!tokenAmount) return 0;
+  if (typeof tokenAmount.uiAmount === "number" && !Number.isNaN(tokenAmount.uiAmount)) {
+    return tokenAmount.uiAmount;
+  }
+  if (tokenAmount.uiAmountString) {
+    const val = parseFloat(tokenAmount.uiAmountString);
+    if (!Number.isNaN(val)) return val;
+  }
+  if (tokenAmount.amount) {
+    const decimals = Number(tokenAmount.decimals ?? 0);
+    return Number(tokenAmount.amount) / Math.pow(10, decimals);
+  }
+  return 0;
+}
+
+export async function fetchTokenMetadataAndPrices(mints) {
   const uniqueMints = [...new Set(mints.filter(Boolean))];
   if (!uniqueMints.length) return {};
+  const result = {};
+
+  // 1. Jupiter Datapi Assets Search (returns usdPrice, symbol, name, etc.)
   try {
     const res = await fetch(`https://datapi.jup.ag/v1/assets/search?query=${uniqueMints.join(",")}`, {
       headers: getHeader(),
     });
-    if (!res.ok) return {};
-    const assets = await res.json();
-    const prices = {};
-    for (const a of assets) {
-      if (a.id && a.usdPrice != null) {
-        prices[a.id] = parseFloat(a.usdPrice);
+    if (res.ok) {
+      const assets = await res.json();
+      if (Array.isArray(assets)) {
+        for (const a of assets) {
+          if (a.id) {
+            result[a.id] = {
+              price: a.usdPrice != null ? parseFloat(a.usdPrice) : 0,
+              symbol: a.symbol || a.id.slice(0, 8),
+              name: a.name || "",
+            };
+          }
+        }
       }
     }
-    return prices;
   } catch (e) {
-    log("wallet_error", `Jupiter price lookup failed: ${e.message}`);
-    return {};
+    log("wallet_warn", `Jupiter asset lookup failed: ${e.message}`);
   }
+
+  // 2. Fallback to Jupiter Price API v2 for any mints still missing price
+  const missingMints = uniqueMints.filter(m => !result[m] || !result[m].price);
+  if (missingMints.length > 0) {
+    try {
+      const jupRes = await fetch(`https://api.jup.ag/price/v2?ids=${missingMints.join(",")}`, {
+        headers: getHeader({ "x-api-key": getJupiterApiKey() }),
+      });
+      if (jupRes.ok) {
+        const jupData = await jupRes.json();
+        if (jupData?.data) {
+          for (const [id, item] of Object.entries(jupData.data)) {
+            if (item?.price) {
+              const price = parseFloat(item.price) || 0;
+              if (!result[id]) {
+                result[id] = { price, symbol: id.slice(0, 8), name: "" };
+              } else {
+                result[id].price = price;
+              }
+            }
+          }
+        }
+      }
+    } catch (e) {
+      log("wallet_warn", `Jupiter price v2 lookup failed: ${e.message}`);
+    }
+  }
+
+  // Ensure every mint requested has a structured entry
+  for (const m of uniqueMints) {
+    if (!result[m]) {
+      result[m] = {
+        price: 0,
+        symbol: m === config.tokens.SOL ? "SOL" : m === config.tokens.USDC ? "USDC" : m.slice(0, 8),
+        name: "",
+      };
+    }
+  }
+
+  return result;
+}
+
+/**
+ * Retry missing/unpriced tokens using Jupiter Price API v2
+ */
+export async function resolveMissingTokens(tokens, metaAndPrices) {
+  const missing = tokens.filter(t => !metaAndPrices[t.mint] || !metaAndPrices[t.mint].price);
+  if (!missing.length) return metaAndPrices;
+
+  try {
+    const mintIds = missing.map(t => t.mint).join(",");
+    const res = await fetch(`https://api.jup.ag/price/v2?ids=${mintIds}`, {
+      headers: getHeader({ "x-api-key": getJupiterApiKey() }),
+    });
+    if (res.ok) {
+      const data = await res.json();
+      if (data?.data) {
+        for (const [id, item] of Object.entries(data.data)) {
+          if (item?.price) {
+            const price = parseFloat(item.price) || 0;
+            if (metaAndPrices[id]) {
+              metaAndPrices[id].price = price;
+            } else {
+              metaAndPrices[id] = { price, symbol: id.slice(0, 8), name: "" };
+            }
+            log("wallet", `Resolved missing token via Jupiter (${id.slice(0, 8)}): $${price}`);
+          }
+        }
+      }
+    }
+  } catch (e) {
+    log("wallet_warn", `Failed to resolve missing tokens via Jupiter: ${e.message}`);
+  }
+
+  return metaAndPrices;
+}
+
+async function fetchJupiterPrices(mints) {
+  const meta = await fetchTokenMetadataAndPrices(mints);
+  const prices = {};
+  for (const [mint, info] of Object.entries(meta)) {
+    prices[mint] = info.price || 0;
+  }
+  return prices;
 }
 
 /**
@@ -140,10 +250,10 @@ export async function getWalletBalancesFromBirdeye(walletAddress) {
     const rawItems = Array.isArray(data.data)
       ? data.data
       : Array.isArray(data.data?.items)
-      ? data.data.items
-      : Array.isArray(data.data?.tokens)
-      ? data.data.tokens
-      : [];
+        ? data.data.items
+        : Array.isArray(data.data?.tokens)
+          ? data.data.tokens
+          : [];
 
     let solEntry = rawItems.find(t => (t.address || t.mint) === NATIVE_SOL || (t.symbol || "").toUpperCase() === "SOL");
     let solBalance = solEntry ? (solEntry.amount ?? solEntry.uiAmount ?? (solEntry.balance ? Number(solEntry.balance) / Math.pow(10, solEntry.decimals ?? 9) : 0)) : 0;
@@ -357,39 +467,61 @@ async function getWalletBalancesFromHelius(walletAddress) {
 }
 
 /**
- * Fetch wallet balances using native Solana web3 RPC (connection.getBalance / getParsedTokenAccountsByOwner).
+ * Core shared function to fetch wallet balances from any Solana web3 Connection.
+ * Queries native SOL, SPL Token Program, and Token-2022 in parallel.
  */
-async function getWalletBalancesFromSolana(walletAddress) {
+async function fetchBalancesForConnection(connection, walletAddress, label = "RPC") {
   try {
-    const connection = getConnection();
     const pubKey = new PublicKey(walletAddress);
 
-    const [solLamports, tokenAccountsResult] = await Promise.all([
+    const [solLamports, splAccountsResult, token2022AccountsResult] = await Promise.all([
       connection.getBalance(pubKey),
-      connection.getParsedTokenAccountsByOwner(pubKey, {
-        programId: new PublicKey("TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"),
+      connection.getParsedTokenAccountsByOwner(pubKey, { programId: TOKEN_PROGRAM_ID }).catch(e => {
+        log("wallet_warn", `${label} SPL Token query failed: ${e.message}`);
+        return { value: [] };
+      }),
+      connection.getParsedTokenAccountsByOwner(pubKey, { programId: TOKEN_2022_PROGRAM_ID }).catch(e => {
+        log("wallet_warn", `${label} Token-2022 query failed: ${e.message}`);
+        return { value: [] };
       }),
     ]);
 
     const solBalance = solLamports / LAMPORTS_PER_SOL;
 
     const rawTokens = [];
-    if (tokenAccountsResult?.value) {
-      for (const item of tokenAccountsResult.value) {
+    if (splAccountsResult?.value) {
+      for (const item of splAccountsResult.value) {
         const parsedInfo = item.account?.data?.parsed?.info;
         if (!parsedInfo) continue;
         const mint = parsedInfo.mint;
-        const balance = parsedInfo.tokenAmount?.uiAmount || 0;
-        if (balance > 0) {
-          rawTokens.push({ mint, balance });
+        const balance = parseTokenBalance(parsedInfo.tokenAmount);
+        if (balance > 0 && mint) {
+          rawTokens.push({ mint, balance, program: "spl" });
+        }
+      }
+    }
+    if (token2022AccountsResult?.value) {
+      for (const item of token2022AccountsResult.value) {
+        const parsedInfo = item.account?.data?.parsed?.info;
+        if (!parsedInfo) continue;
+        const mint = parsedInfo.mint;
+        const balance = parseTokenBalance(parsedInfo.tokenAmount);
+        if (balance > 0 && mint) {
+          rawTokens.push({ mint, balance, program: "token-2022" });
         }
       }
     }
 
-    const mintsToPrice = [config.tokens.SOL, ...rawTokens.map(t => t.mint)];
-    const prices = await fetchJupiterPrices(mintsToPrice);
+    const mintsToLookup = [config.tokens.SOL, ...rawTokens.map(t => t.mint)];
+    let metaAndPrices = await fetchTokenMetadataAndPrices(mintsToLookup);
 
-    const solPrice = prices[config.tokens.SOL] || 0;
+    // Check for missing/unpriced tokens and resolve via Jupiter Price API v2
+    const missingPriceTokens = rawTokens.filter(t => !metaAndPrices[t.mint]?.price);
+    if (missingPriceTokens.length > 0) {
+      metaAndPrices = await resolveMissingTokens(missingPriceTokens, metaAndPrices);
+    }
+
+    const solPrice = metaAndPrices[config.tokens.SOL]?.price || 0;
     const solUsd = solBalance * solPrice;
 
     let usdcBalance = 0;
@@ -398,10 +530,12 @@ async function getWalletBalancesFromSolana(walletAddress) {
     const enrichedTokens = rawTokens.map(t => {
       const mint = t.mint;
       const balance = t.balance;
-      const price = prices[mint] || 0;
+      const info = metaAndPrices[mint];
+      const price = info?.price || 0;
+      const symbol = (mint === config.tokens.USDC) ? "USDC" : (info?.symbol || mint.slice(0, 8));
       const usd = (balance > 0 && price > 0) ? Math.round(balance * price * 100) / 100 : null;
 
-      if (mint === config.tokens.USDC) {
+      if (mint === config.tokens.USDC || symbol.toUpperCase() === "USDC") {
         usdcBalance = balance;
       }
       if (usd != null) {
@@ -410,9 +544,11 @@ async function getWalletBalancesFromSolana(walletAddress) {
 
       return {
         mint,
-        symbol: mint.slice(0, 8),
+        symbol,
         balance,
+        price,
         usd,
+        program: t.program,
       };
     });
 
@@ -428,7 +564,7 @@ async function getWalletBalancesFromSolana(walletAddress) {
       total_usd: Math.round(totalUsd * 100) / 100,
     };
   } catch (error) {
-    log("wallet_error", error.message);
+    log("wallet_error", `${label} wallet error: ${error.message}`);
     return {
       wallet: walletAddress,
       sol: 0,
@@ -443,95 +579,25 @@ async function getWalletBalancesFromSolana(walletAddress) {
 }
 
 /**
+ * Fetch wallet balances using native Solana web3 RPC (connection.getBalance / getParsedTokenAccountsByOwner).
+ */
+async function getWalletBalancesFromSolana(walletAddress) {
+  const connection = getConnection();
+  return fetchBalancesForConnection(connection, walletAddress, "Native Solana RPC");
+}
+
+/**
  * Fetch wallet balances using Alchemy Solana RPC (connection.getBalance / getParsedTokenAccountsByOwner).
  */
 export async function getWalletBalancesFromAlchemy(walletAddress) {
-  const ALCHEMY_RPC = process.env.ALCHEMY_RPC_WALLET;
+  const ALCHEMY_RPC = process.env.ALCHEMY_RPC_WALLET || process.env.RPC_URL;
   if (!ALCHEMY_RPC) {
     log("wallet_error", "ALCHEMY_RPC_WALLET not set in .env");
     return { wallet: walletAddress, sol: 0, sol_price: 0, sol_usd: 0, usdc: 0, tokens: [], total_usd: 0, error: "Alchemy RPC URL missing" };
   }
 
-  try {
-    const connection = new Connection(ALCHEMY_RPC, "confirmed");
-    const pubKey = new PublicKey(walletAddress);
-
-    const [solLamports, tokenAccountsResult] = await Promise.all([
-      connection.getBalance(pubKey),
-      connection.getParsedTokenAccountsByOwner(pubKey, {
-        programId: new PublicKey("TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"),
-      }),
-    ]);
-
-    const solBalance = solLamports / LAMPORTS_PER_SOL;
-
-    const rawTokens = [];
-    if (tokenAccountsResult?.value) {
-      for (const item of tokenAccountsResult.value) {
-        const parsedInfo = item.account?.data?.parsed?.info;
-        if (!parsedInfo) continue;
-        const mint = parsedInfo.mint;
-        const balance = parsedInfo.tokenAmount?.uiAmount || 0;
-        if (balance > 0) {
-          rawTokens.push({ mint, balance });
-        }
-      }
-    }
-
-    const mintsToPrice = [config.tokens.SOL, ...rawTokens.map(t => t.mint)];
-    const prices = await fetchJupiterPrices(mintsToPrice);
-
-    const solPrice = prices[config.tokens.SOL] || 0;
-    const solUsd = solBalance * solPrice;
-
-    let usdcBalance = 0;
-    let tokensUsdSum = 0;
-
-    const enrichedTokens = rawTokens.map(t => {
-      const mint = t.mint;
-      const balance = t.balance;
-      const price = prices[mint] || 0;
-      const usd = (balance > 0 && price > 0) ? Math.round(balance * price * 100) / 100 : null;
-
-      if (mint === config.tokens.USDC) {
-        usdcBalance = balance;
-      }
-      if (usd != null) {
-        tokensUsdSum += usd;
-      }
-
-      return {
-        mint,
-        symbol: mint.slice(0, 8),
-        balance,
-        usd,
-      };
-    });
-
-    const totalUsd = solUsd + tokensUsdSum;
-
-    return {
-      wallet: walletAddress,
-      sol: Math.round(solBalance * 1e6) / 1e6,
-      sol_price: Math.round(solPrice * 100) / 100,
-      sol_usd: Math.round(solUsd * 100) / 100,
-      usdc: Math.round(usdcBalance * 100) / 100,
-      tokens: enrichedTokens,
-      total_usd: Math.round(totalUsd * 100) / 100,
-    };
-  } catch (error) {
-    log("wallet_error", error.message);
-    return {
-      wallet: walletAddress,
-      sol: 0,
-      sol_price: 0,
-      sol_usd: 0,
-      usdc: 0,
-      tokens: [],
-      total_usd: 0,
-      error: error.message,
-    };
-  }
+  const connection = new Connection(ALCHEMY_RPC, "confirmed");
+  return fetchBalancesForConnection(connection, walletAddress, "Alchemy RPC");
 }
 
 /**

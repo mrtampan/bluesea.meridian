@@ -678,8 +678,6 @@ export async function sweepResidualTokens({ force = false } = {}) {
   const failed = [];
   let totalChecked = 0;
 
-  console.log(balances.tokens);
-
   for (const token of balances.tokens) {
     if (!token.mint || token.mint === SOL_MINT || token.mint === "SOL") continue;
     if (token.symbol === "USDC" || token.symbol === "USDT") continue;
