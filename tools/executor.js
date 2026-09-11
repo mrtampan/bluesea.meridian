@@ -10,7 +10,7 @@ import {
   closePosition,
   searchPools,
 } from "./dlmm.js";
-import { getWalletBalances, swapToken } from "./wallet.js";
+import { getWalletBalances, swapToken, normalizeMint, isSolMint, isUsdcMint, isUsdtMint, SOL_MINT } from "./wallet.js";
 import { studyTopLPers } from "./study.js";
 import { addLesson, clearAllLessons, clearPerformance, removeLessonsByKeyword, getPerformanceHistory, pinLesson, unpinLesson, listLessons } from "../lessons.js";
 import { setPositionInstruction } from "../state.js";
@@ -620,6 +620,9 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
  * Returns { swapped, result, token } — swapped=false if nothing to do or all attempts failed.
  */
 async function swapBaseToSolWithRetry(baseMint, label) {
+  if (!baseMint || isSolMint(baseMint)) {
+    return { swapped: false, result: null, token: null };
+  }
   const attempts = Math.max(1, Number(config.management.autoSwapRetryAttempts ?? 3));
   const delayMs = Math.max(0, Number(config.management.autoSwapRetryDelayMs ?? 3000));
   let lastErr = null;
@@ -679,8 +682,8 @@ export async function sweepResidualTokens({ force = false } = {}) {
   let totalChecked = 0;
 
   for (const token of balances.tokens) {
-    if (!token.mint || token.mint === SOL_MINT || token.mint === "SOL") continue;
-    if (token.symbol === "USDC" || token.symbol === "USDT") continue;
+    if (!token.mint || isSolMint(token.mint, token.symbol)) continue;
+    if (isUsdcMint(token.mint, token.symbol) || isUsdtMint(token.mint, token.symbol)) continue;
 
     totalChecked++;
     const usdVal = Number(token.usd ?? 0);
@@ -972,8 +975,14 @@ async function runSafetyChecks(name, args) {
     }
 
     case "swap_token": {
-      // Basic check — prevent swapping when DRY_RUN is true
-      // (handled inside swapToken itself, but belt-and-suspenders)
+      const inMint = normalizeMint(args.input_mint);
+      const outMint = normalizeMint(args.output_mint);
+      if (inMint && outMint && inMint === outMint) {
+        return {
+          pass: false,
+          reason: "inputMint cannot be same as outputMint",
+        };
+      }
       return { pass: true };
     }
 

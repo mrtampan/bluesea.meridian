@@ -55,6 +55,61 @@ function getJupiterReferralParams() {
 const TOKEN_PROGRAM_ID = new PublicKey("TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA");
 const TOKEN_2022_PROGRAM_ID = new PublicKey("TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb");
 
+export const SOL_MINT = "So11111111111111111111111111111111111111112";
+export const NATIVE_SOL = "So11111111111111111111111111111111111111111";
+export const SYSTEM_PROGRAM_ID = "11111111111111111111111111111111";
+
+// Normalize any SOL-like address to the correct wrapped SOL mint
+export function normalizeMint(mint) {
+  if (!mint) return mint;
+  const m = String(mint).trim();
+  if (
+    m.toUpperCase() === "SOL" ||
+    m.toUpperCase() === "WSOL" ||
+    m.toLowerCase() === "native" ||
+    m === SYSTEM_PROGRAM_ID ||
+    m === NATIVE_SOL ||
+    m === SOL_MINT
+  ) {
+    return SOL_MINT;
+  }
+  return m;
+}
+
+export function isSolMint(mint, symbol = "") {
+  if (!mint && !symbol) return false;
+  const sym = String(symbol || "").trim().toUpperCase();
+  if (sym === "SOL" || sym === "WSOL") return true;
+  const m = String(mint || "").trim();
+  if (
+    m.toUpperCase() === "SOL" ||
+    m.toUpperCase() === "WSOL" ||
+    m.toLowerCase() === "native" ||
+    m === SYSTEM_PROGRAM_ID ||
+    m === NATIVE_SOL ||
+    m === SOL_MINT
+  ) {
+    return true;
+  }
+  return false;
+}
+
+export function isUsdcMint(mint, symbol = "") {
+  if (!mint && !symbol) return false;
+  const sym = String(symbol || "").trim().toUpperCase();
+  if (sym === "USDC") return true;
+  const m = String(mint || "").trim();
+  return m === config.tokens.USDC || m === "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v";
+}
+
+export function isUsdtMint(mint, symbol = "") {
+  if (!mint && !symbol) return false;
+  const sym = String(symbol || "").trim().toUpperCase();
+  if (sym === "USDT") return true;
+  const m = String(mint || "").trim();
+  return m === config.tokens.USDT || m === "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB";
+}
+
 export function parseTokenBalance(tokenAmount) {
   if (!tokenAmount) return 0;
   if (typeof tokenAmount.uiAmount === "number" && !Number.isNaN(tokenAmount.uiAmount)) {
@@ -255,7 +310,7 @@ export async function getWalletBalancesFromBirdeye(walletAddress) {
           ? data.data.tokens
           : [];
 
-    let solEntry = rawItems.find(t => (t.address || t.mint) === NATIVE_SOL || (t.symbol || "").toUpperCase() === "SOL");
+    let solEntry = rawItems.find(t => (t.address || t.mint) === config.tokens.SOL || (t.symbol || "").toUpperCase() === "SOL");
     let solBalance = solEntry ? (solEntry.amount ?? solEntry.uiAmount ?? (solEntry.balance ? Number(solEntry.balance) / Math.pow(10, solEntry.decimals ?? 9) : 0)) : 0;
     let solPrice = solEntry ? (solEntry.price ?? solEntry.priceUsd ?? 0) : 0;
 
@@ -437,7 +492,7 @@ async function getWalletBalancesFromHelius(walletAddress) {
 
     const enrichedTokens = balances.map(b => ({
       mint: b.mint,
-      symbol: b.symbol || b.mint.slice(0, 8),
+      symbol: b.symbol || (b.mint ? b.mint.slice(0, 8) : "UNKNOWN"),
       balance: b.balance,
       usd: b.usdValue ? Math.round(b.usdValue * 100) / 100 : null,
     }));
@@ -652,23 +707,6 @@ export async function getWalletBalances() {
 /**
  * Swap tokens via Jupiter Swap API V2 (order → sign → execute).
  */
-const SOL_MINT = "So11111111111111111111111111111111111111112";
-
-// Normalize any SOL-like address to the correct wrapped SOL mint
-export function normalizeMint(mint) {
-  if (!mint) return mint;
-  const SOL_MINT = "So11111111111111111111111111111111111111112";
-  if (
-    mint === "SOL" ||
-    mint === "native" ||
-    /^So1+$/.test(mint) ||
-    (mint.length >= 32 && mint.length <= 44 && mint.startsWith("So1") && mint !== SOL_MINT)
-  ) {
-    return SOL_MINT;
-  }
-  return mint;
-}
-
 export async function swapToken({
   input_mint,
   output_mint,
@@ -676,6 +714,22 @@ export async function swapToken({
 }) {
   input_mint = normalizeMint(input_mint);
   output_mint = normalizeMint(output_mint);
+
+  if (!input_mint || !output_mint || input_mint === output_mint) {
+    log("swap_warn", `Swap skipped: inputMint cannot be same as outputMint (${input_mint} → ${output_mint})`);
+    return {
+      success: false,
+      error: "inputMint cannot be same as outputMint",
+    };
+  }
+
+  if (!amount || Number(amount) <= 0) {
+    log("swap_warn", `Swap skipped: invalid amount (${amount})`);
+    return {
+      success: false,
+      error: "Invalid swap amount",
+    };
+  }
 
   if (process.env.DRY_RUN === "true") {
     return {
