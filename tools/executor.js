@@ -663,6 +663,7 @@ export async function sweepResidualTokens({ force = false } = {}) {
   const minUsd = Math.max(0.10, Number(config.management.minAutoSweepUsd ?? 0.50));
   const maxFailures = Math.max(1, Number(config.management.maxAutoSweepFailures ?? 3));
   const SOL_MINT = "So11111111111111111111111111111111111111112";
+  const NATIVE_SOL_MINT = "So11111111111111111111111111111111111111111";
 
   const balances = await getWalletBalances({}).catch((e) => {
     log("executor_warn", `Residual sweep balance fetch failed: ${e.message}`);
@@ -679,7 +680,7 @@ export async function sweepResidualTokens({ force = false } = {}) {
   let totalChecked = 0;
 
   for (const token of balances.tokens) {
-    if (!token.mint || token.mint === SOL_MINT || token.mint === "SOL") continue;
+    if (!token.mint || token.mint === SOL_MINT || token.mint === NATIVE_SOL_MINT || token.mint === "SOL") continue;
     if (token.symbol === "USDC" || token.symbol === "USDT") continue;
 
     totalChecked++;
