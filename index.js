@@ -237,9 +237,14 @@ export async function runManagementCycle({ silent = false } = {}) {
 
     if (positions.length === 0) {
       await sweepResidualTokens().catch((e) => log("cron_warn", `Residual token sweep failed: ${e.message}`));
-      log("cron", "No open positions — triggering screening cycle");
-      mgmtReport = "No open positions. Triggering screening cycle.";
-      runScreeningCycle().catch((e) => log("cron_error", `Triggered screening failed: ${e.message}`));
+      if (config.risk.maxPositions > 1) {
+        log("cron", "No open positions — triggering screening cycle");
+        mgmtReport = "No open positions. Triggering screening cycle.";
+        runScreeningCycle().catch((e) => log("cron_error", `Triggered screening failed: ${e.message}`));
+      } else {
+        log("cron", "No open positions");
+        mgmtReport = "No open positions.";
+      }
       return mgmtReport;
     }
 
