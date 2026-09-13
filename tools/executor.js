@@ -629,6 +629,7 @@ async function swapBaseToSolWithRetry(baseMint, label) {
       const token = balances.tokens?.find((t) => t.mint === baseMint);
       const usdVal = Number(token?.usd ?? 0);
       if (!token || usdVal < 0.10) {
+        log("executor_warn", `balance: ${token?.balance}, usd: ${usdVal}, sol: ${balances.sol}, mint: ${token?.mint}, symbol: ${token?.symbol}`);
         // Nothing left to swap (already sold or dust) — treat as done.
         return { swapped: attempt > 1, result: null, token: null };
       }
