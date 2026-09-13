@@ -712,23 +712,31 @@ export async function sweepResidualTokens({ force = false } = {}) {
     }
 
     log("executor", `Residual sweep detected leftover token ${token.symbol || token.mint.slice(0, 8)} ($${usdVal.toFixed(2)}) — attempting swap to SOL`);
-    const { swapped, result } = await swapBaseToSolWithRetry(token.mint, "residual sweep");
+    let swapResult = null;
+    let lastErr = null;
+    try {
+      swapResult = await swapToken({ input_mint: token.mint, output_mint: "SOL", amount: token.balance });
+    } catch (e) {
+      lastErr = e.message;
+    }
+    const ok = swapResult && swapResult.success !== false && !swapResult.error && (swapResult.tx || swapResult.amount_out || swapResult.dry_run);
 
-    if (swapped) {
+    if (ok) {
       residualSweepFailures.delete(token.mint);
       swept.push({
         mint: token.mint,
         symbol: token.symbol,
         usd: usdVal,
-        tx: result?.tx || result?.amount_out || null,
+        tx: swapResult?.tx || swapResult?.amount_out || (swapResult?.dry_run ? "dry_run" : null),
       });
     } else {
+      const err = lastErr || swapResult?.error || swapResult?.reason || "Swap failed or returned no transaction";
       residualSweepFailures.set(token.mint, failedCount + 1);
       failed.push({
         mint: token.mint,
         symbol: token.symbol,
         usd: usdVal,
-        error: "Swap failed or returned no transaction",
+        error: err,
       });
     }
   }
