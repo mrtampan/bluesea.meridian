@@ -625,6 +625,9 @@ async function swapBaseToSolWithRetry(baseMint, label) {
   let lastErr = null;
   for (let attempt = 1; attempt <= attempts; attempt++) {
     try {
+      if (attempt === 1 && label === "after close") {
+        await sleep(delayMs);
+      }
       const balances = await getWalletBalances({});
       const token = balances.tokens?.find((t) => t.mint === baseMint);
       const usdVal = Number(token?.usd ?? 0);
