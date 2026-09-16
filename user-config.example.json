@@ -1,6 +1,6 @@
 {
   "preset": "custom",
-  "rpcUrl": "https://pump.helius-rpc.com",
+  "rpcUrl": "https://api.mainnet-beta.solana.com",
   "llmBaseUrl": "",
   "llmApiKey": "",
   "llmModel": "minimax/minimax-m2.7",
@@ -90,7 +90,7 @@
   "lpAgentRelayEnabled": false,
 
   "pnlSource": "rpc",
-  "pnlRpcUrl": "https://pump.helius-rpc.com",
+  "pnlRpcUrl": "https://api.mainnet-beta.solana.com",
   "pnlPollIntervalSec": 3,
   "pnlDepositCacheTtlSec": 300,
 
