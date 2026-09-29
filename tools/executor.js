@@ -281,6 +281,10 @@ const toolMap = {
   close_position: closePosition,
   get_wallet_balance: getWalletBalances,
   swap_token: swapToken,
+  sweep_residual_tokens: sweepResidualTokens,
+  sweep: sweepResidualTokens,
+  clean_dust: cleanDustTokens,
+  clean_dust_tokens: cleanDustTokens,
   get_top_lpers: studyTopLPers,
   study_top_lpers: studyTopLPers,
   set_position_note: ({ position_address, instruction }) => {
@@ -391,6 +395,9 @@ const toolMap = {
       autoSwapAfterClaim: ["management", "autoSwapAfterClaim"],
       autoSwapRetryAttempts: ["management", "autoSwapRetryAttempts"],
       autoSwapRetryDelayMs: ["management", "autoSwapRetryDelayMs"],
+      autoSweepResidualTokens: ["management", "autoSweepResidualTokens"],
+      minAutoSweepUsd: ["management", "minAutoSweepUsd"],
+      maxAutoSweepFailures: ["management", "maxAutoSweepFailures"],
       outOfRangeBinsToClose: ["management", "outOfRangeBinsToClose"],
       outOfRangeWaitMinutes: ["management", "outOfRangeWaitMinutes"],
       oorCooldownTriggerCount: ["management", "oorCooldownTriggerCount"],
@@ -743,6 +750,79 @@ export async function sweepResidualTokens({ force = false } = {}) {
 
   return { swept, skipped, failed, totalChecked, autoSweepEnabled };
 }
+
+/**
+ * Clean dust non-SOL tokens in wallet back to SOL.
+ * Manual utility duplicated from sweepResidualTokens with minimum USD threshold default $0.01.
+ * Only run manually via Telegram or CLI/command prompt.
+ */
+export async function cleanDustTokens({ minUsd = 0.01 } = {}) {
+  const minThreshold = Math.max(0.0001, Number(minUsd ?? 0.01));
+  const SOL_MINT = "So11111111111111111111111111111111111111112";
+  const NATIVE_SOL_MINT = "So11111111111111111111111111111111111111111";
+
+  const balances = await getWalletBalances({}).catch((e) => {
+    log("executor_warn", `Clean dust balance fetch failed: ${e.message}`);
+    return null;
+  });
+
+  if (!balances || !Array.isArray(balances.tokens) || balances.tokens.length === 0) {
+    return { swept: [], skipped: [], failed: [], totalChecked: 0 };
+  }
+
+  const swept = [];
+  const skipped = [];
+  const failed = [];
+  let totalChecked = 0;
+
+  for (const token of balances.tokens) {
+    if (!token.mint || token.mint === SOL_MINT || token.mint === NATIVE_SOL_MINT || token.mint === "SOL") continue;
+    if (token.symbol === "USDC" || token.symbol === "USDT") continue;
+
+    totalChecked++;
+    const usdVal = Number(token.usd ?? 0);
+    if (usdVal < minThreshold) {
+      skipped.push({
+        mint: token.mint,
+        symbol: token.symbol,
+        usd: usdVal,
+        reason: `Value ($${usdVal < 0.1 ? usdVal.toFixed(4) : usdVal.toFixed(2)}) below minimum threshold ($${minThreshold.toFixed(2)})`,
+      });
+      continue;
+    }
+
+    log("executor", `Clean dust detected token ${token.symbol || token.mint.slice(0, 8)} ($${usdVal < 0.1 ? usdVal.toFixed(4) : usdVal.toFixed(2)}) — attempting swap to SOL`);
+    let swapResult = null;
+    let lastErr = null;
+    try {
+      swapResult = await swapToken({ input_mint: token.mint, output_mint: "SOL", amount: token.balance });
+    } catch (e) {
+      lastErr = e.message;
+    }
+    const ok = swapResult && swapResult.success !== false && !swapResult.error && (swapResult.tx || swapResult.amount_out || swapResult.dry_run);
+
+    if (ok) {
+      swept.push({
+        mint: token.mint,
+        symbol: token.symbol,
+        usd: usdVal,
+        tx: swapResult?.tx || swapResult?.amount_out || (swapResult?.dry_run ? "dry_run" : null),
+      });
+    } else {
+      const err = lastErr || swapResult?.error || swapResult?.reason || "Swap failed or returned no transaction";
+      failed.push({
+        mint: token.mint,
+        symbol: token.symbol,
+        usd: usdVal,
+        error: err,
+      });
+    }
+  }
+
+  return { swept, skipped, failed, totalChecked };
+}
+
+export const cleanDust = cleanDustTokens;
 
 
 /**

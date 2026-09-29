@@ -426,6 +426,7 @@ const BOT_COMMANDS = [
   { command: "briefing",   description: "Morning briefing" },
   { command: "hive",       description: "HiveMind sync status" },
   { command: "sweep",      description: "Manually sweep residual tokens to SOL" },
+  { command: "cleandust",  description: "Clean dust tokens to SOL (min $0.01)" },
   { command: "pause",      description: "Stop cron cycles" },
   { command: "resume",     description: "Start cron cycles again" },
   { command: "stop",       description: "Shut down agent" },

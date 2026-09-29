@@ -101,6 +101,12 @@ Manually sweeps leftover non-SOL tokens in wallet back to SOL.
 Output: { swept, skipped, failed, totalChecked, autoSweepEnabled }
 \`\`\`
 
+### meridian clean-dust [--dry-run]
+Manually cleans dust non-SOL tokens in wallet back to SOL (min $0.01).
+\`\`\`
+Output: { swept, skipped, failed, totalChecked }
+\`\`\`
+
 ### meridian candidates [--limit 5]
 Returns top pool candidates fully enriched: pool metrics, token audit, holders, smart wallets, narrative, active bin, pool memory.
 \`\`\`
@@ -238,27 +244,27 @@ if (!subcommand || subcommand === "help" || argv.includes("--help")) {
 const { values: flags } = parseArgs({
   args: argv,
   options: {
-    pool:       { type: "string" },
-    amount:     { type: "string" },
-    position:   { type: "string" },
-    from:       { type: "string" },
-    to:         { type: "string" },
-    strategy:   { type: "string" },
-    query:      { type: "string" },
-    mint:       { type: "string" },
-    wallet:     { type: "string" },
-    timeframe:  { type: "string" },
-    reason:     { type: "string" },
+    pool: { type: "string" },
+    amount: { type: "string" },
+    position: { type: "string" },
+    from: { type: "string" },
+    to: { type: "string" },
+    strategy: { type: "string" },
+    query: { type: "string" },
+    mint: { type: "string" },
+    wallet: { type: "string" },
+    timeframe: { type: "string" },
+    reason: { type: "string" },
     "bins-below": { type: "string" },
     "bins-above": { type: "string" },
-    "amount-x":   { type: "string" },
-    "amount-y":   { type: "string" },
-    "bps":        { type: "string" },
-    "no-claim":   { type: "boolean" },
-    "skip-swap":  { type: "boolean" },
-    "dry-run":    { type: "boolean" },
-    "silent":     { type: "boolean" },
-    limit:        { type: "string" },
+    "amount-x": { type: "string" },
+    "amount-y": { type: "string" },
+    "bps": { type: "string" },
+    "no-claim": { type: "boolean" },
+    "skip-swap": { type: "boolean" },
+    "dry-run": { type: "boolean" },
+    "silent": { type: "boolean" },
+    limit: { type: "string" },
   },
   allowPositionals: true,
   strict: false,
@@ -681,6 +687,14 @@ switch (subcommand) {
   case "sweep": {
     const { sweepResidualTokens } = await import("./tools/executor.js");
     out(await sweepResidualTokens({ force: true }));
+    break;
+  }
+
+  // ── clean-dust ──────────────────────────────────────────────────
+  case "clean-dust":
+  case "cleandust": {
+    const { cleanDustTokens } = await import("./tools/executor.js");
+    out(await cleanDustTokens({ minUsd: 0.01 }));
     break;
   }
 
