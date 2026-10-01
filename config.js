@@ -212,7 +212,7 @@ export const config = {
 
   // ─── Opportunity poller (catches strong pools between screening cycles) ──
   opportunity: {
-    enabled: u.opportunityPollEnabled ?? true,
+    enabled: u.opportunityPollEnabled ?? false,
     pollIntervalSec: Number(u.opportunityPollIntervalSec ?? 45),
     limit: Number(u.opportunityPollLimit ?? 10),
     // Pre-gate: only trigger the full deploy decision when the best candidate's
@@ -328,6 +328,7 @@ export function reloadScreeningThresholds() {
     if (fresh.maxBotHoldersPct != null) s.maxBotHoldersPct = fresh.maxBotHoldersPct;
     if (fresh.allowedLaunchpads !== undefined) s.allowedLaunchpads = fresh.allowedLaunchpads;
     if (fresh.blockedLaunchpads !== undefined) s.blockedLaunchpads = fresh.blockedLaunchpads;
+    if (fresh.opportunityPollEnabled !== undefined) config.opportunity.enabled = fresh.opportunityPollEnabled;
     if (fresh.chartIndicatorConfirmPrompt !== undefined) config.chartIndicatorConfirmPrompt = fresh.chartIndicatorConfirmPrompt;
     const minBinsBelow = numericConfig(fresh.minBinsBelow) ?? config.strategy.minBinsBelow;
     const maxBinsBelow = numericConfig(fresh.maxBinsBelow) ?? numericConfig(fresh.binsBelow) ?? config.strategy.maxBinsBelow;
