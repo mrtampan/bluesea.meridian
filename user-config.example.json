@@ -67,7 +67,7 @@
   "managementIntervalMin": 10,
   "screeningIntervalMin": 30,
   "healthCheckIntervalMin": 60,
-  "opportunityPollEnabled": false,
+  "opportunityPollEnabled": true,
 
   "temperature": 0.373,
   "maxTokens": 4096,

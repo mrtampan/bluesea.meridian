@@ -817,7 +817,7 @@ Summarize the current portfolio health, total fees earned, and performance of al
           ? ` + smart wallet [${trigger.smart.map((w) => w.name || w.address?.slice(0, 4)).join(", ")}] (bar lowered ${minScore}→${floor})`
           : "";
         log("cron", `[Opportunity] ${trigger.c.name} degen ${trigger.s.toFixed(1)} >= ${trigger.smart.length ? floor : minScore}${smartTag} — triggering screening deploy decision`);
-        runScreeningCycle({ silent: true }).catch((e) => log("cron_error", `Opportunity-triggered screening failed: ${e.message}`));
+        runScreeningCycle({ silent: false }).catch((e) => log("cron_error", `Opportunity-triggered screening failed: ${e.message}`));
       } catch (e) {
         log("cron_error", `Opportunity poll failed: ${e.message}`);
       } finally {
