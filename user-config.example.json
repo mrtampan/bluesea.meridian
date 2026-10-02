@@ -68,6 +68,8 @@
   "screeningIntervalMin": 30,
   "healthCheckIntervalMin": 60,
   "opportunityPollEnabled": true,
+  "opportunityPollIntervalSec": 300,
+  "opportunityMinScore": 65,
 
   "temperature": 0.373,
   "maxTokens": 4096,
