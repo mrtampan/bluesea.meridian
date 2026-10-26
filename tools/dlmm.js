@@ -99,7 +99,7 @@ function getWallet() {
 }
 
 function shouldUseLpAgentRelay() {
-  return !!config.api.lpAgentRelayEnabled;
+  return !config.standalone.enabled && !!config.api.lpAgentRelayEnabled;
 }
 
 function shouldUseLpAgentRelayForDeploy() {
@@ -472,8 +472,11 @@ export async function deployPosition({
   entry_tvl,
   entry_volume,
   entry_holders,
+  before_submit,
+  on_prepared,
 }) {
   pool_address = normalizeMint(pool_address);
+  if (config.standalone.enabled && typeof before_submit !== "function") throw new Error("Standalone deploy requires a wallet signal");
   const activeStrategy = strategy || config.strategy.strategy;
   let activeBinsBelow = bins_below ?? config.strategy.defaultBinsBelow ?? config.strategy.minBinsBelow;
   let activeBinsAbove = bins_above ?? 0;
@@ -492,6 +495,7 @@ export async function deployPosition({
   const { StrategyType, getBinIdFromPrice, getPriceOfBinByBinId } = await getDLMM();
   const pool = await getPool(pool_address);
   const baseMint = pool.lbPair.tokenXMint.toString();
+  if (config.standalone.enabled && pool.lbPair.tokenYMint.toString() !== config.tokens.SOL) throw new Error("Standalone execution requires SOL as token Y");
   if (isBaseMintOnCooldown(baseMint)) {
     log("deploy", `Base mint ${baseMint.slice(0, 8)} is on cooldown — skipping deploy for pool ${pool_address.slice(0, 8)}`);
     return { success: false, error: "Token on cooldown — recently closed out-of-range too many times. Try a different token." };
@@ -769,6 +773,7 @@ export async function deployPosition({
 
   const wallet = getWallet();
   const newPosition = Keypair.generate();
+  await on_prepared?.(newPosition.publicKey.toString());
 
   log("deploy", `Pool: ${pool_address}`);
   log("deploy", `Strategy: ${activeStrategy}, Bins: ${minBinId} to ${maxBinId} (${totalBins} bins${isWideRange ? " — WIDE RANGE" : ""})`);
@@ -795,6 +800,7 @@ export async function deployPosition({
       const createTxArray = Array.isArray(createTxs) ? createTxs : [createTxs];
       for (let i = 0; i < createTxArray.length; i++) {
         const signers = i === 0 ? [wallet, newPosition] : [wallet];
+        await before_submit?.();
         const txHash = await sendAndConfirmTransaction(getConnection(), createTxArray[i], signers);
         txHashes.push(txHash);
         log("deploy", `Create tx ${i + 1}/${createTxArray.length}: ${txHash}`);
@@ -807,10 +813,11 @@ export async function deployPosition({
         totalXAmount: totalXLamports,
         totalYAmount: totalYLamports,
         strategy: { minBinId, maxBinId, strategyType },
-        slippage: 10, // 10%
+        slippage: config.standalone.enabled ? 1 : 10, // SDK expects percent
       });
       const addTxArray = Array.isArray(addTxs) ? addTxs : [addTxs];
       for (let i = 0; i < addTxArray.length; i++) {
+        await before_submit?.();
         const txHash = await sendAndConfirmTransaction(getConnection(), addTxArray[i], [wallet]);
         txHashes.push(txHash);
         log("deploy", `Add liquidity tx ${i + 1}/${addTxArray.length}: ${txHash}`);
@@ -823,8 +830,9 @@ export async function deployPosition({
         totalXAmount: totalXLamports,
         totalYAmount: totalYLamports,
         strategy: { maxBinId, minBinId, strategyType },
-        slippage: 1000, // 10% in bps
+        slippage: config.standalone.enabled ? 1 : 10, // SDK expects percent, not bps
       });
+      await before_submit?.();
       const txHash = await sendAndConfirmTransaction(getConnection(), tx, [wallet, newPosition]);
       txHashes.push(txHash);
     }
@@ -947,7 +955,8 @@ export async function getPositionPnl({ pool_address, position_address }) {
   pool_address = normalizeMint(pool_address);
   position_address = normalizeMint(position_address);
   const walletAddress = getWallet().publicKey.toString();
-  // Prefer the public-infra path (RPC + Jupiter + Meteora deposits) used by getMyPositions.
+  // When pnl.source=rpc, prefer the shared on-chain engine; otherwise (default)
+  // this whole lookup goes straight to the Meteora /pnl API below.
   if (config.pnl.source === "rpc") {
     try {
       const payload = await getMyPositions({ force: true, silent: true });
@@ -1153,15 +1162,15 @@ export async function getMyPositions({ force = false, silent = false, wallet_add
 
   let walletAddress;
   try {
-    walletAddress = walletOverride || getWallet().publicKey.toString();
+    walletAddress = walletOverride || config.standalone.walletAddress || getWallet().publicKey.toString();
   } catch {
     return { wallet: null, total_positions: 0, positions: [], error: "Wallet not configured" };
   }
 
   const loadPositions = async () => { try {
-    // ── Primary path: public infra (on-chain RPC + Jupiter + Meteora deposits) ──
-    // No LPAgent / agentmeridian dependency, so the poller runs aggressively on
-    // fully public resources. Falls through to the Meteora-API path on any error.
+    // ── Primary path: Meteora portfolio + /pnl APIs (no per-tick RPC reads) ──
+    // Full precomputed position data — discovery, value, fees, PnL, bins.
+    // Falls back to the on-chain RPC engine only if the APIs are unreachable.
     if (config.pnl.source === "rpc") {
       try {
         if (!silent) log("positions", `Computing PnL from RPC (${config.pnl.rpcUrl})...`);
@@ -1177,12 +1186,29 @@ export async function getMyPositions({ force = false, silent = false, wallet_add
       }
     }
 
-    // ── Fallback path: Meteora portfolio + /pnl APIs (no LPAgent) ──
-    if (!silent) log("positions", "Fetching portfolio via Meteora portfolio API...");
-    const portfolioUrl = `https://dlmm.datapi.meteora.ag/portfolio/open?user=${walletAddress}`;
-    const res = await fetch(portfolioUrl);
-    if (!res.ok) throw new Error(`Portfolio API ${res.status}: ${await res.text().catch(() => "")}`);
-    const portfolio = await res.json();
+    // ── Fallback path (or primary when pnl.source=meteora): Meteora portfolio + /pnl APIs ──
+    let portfolio;
+    try {
+      if (!silent) log("positions", "Fetching portfolio via Meteora portfolio API...");
+      const portfolioUrl = `https://dlmm.datapi.meteora.ag/portfolio/open?user=${walletAddress}`;
+      const res = await fetch(portfolioUrl);
+      if (!res.ok) throw new Error(`Portfolio API ${res.status}: ${await res.text().catch(() => "")}`);
+      portfolio = await res.json();
+    } catch (error) {
+      if (config.pnl.source === "meteora") {
+        // Last resort: the on-chain engine. Runs only while the APIs are down,
+        // so the cheap path stays the norm and exits keep working.
+        log("positions_warn", `Meteora PnL path failed (${error.message}); falling back to on-chain RPC engine`);
+        const rpcResult = await computePositions(walletAddress);
+        if (useLocalWallet) {
+          syncOpenPositions(rpcResult.positions.map((p) => p.position));
+          _positionsCache = rpcResult;
+          _positionsCacheAt = Date.now();
+        }
+        return rpcResult;
+      }
+      throw error;
+    }
 
     const pools = portfolio.pools || [];
     log("positions", `Found ${pools.length} pool(s) with open positions`);

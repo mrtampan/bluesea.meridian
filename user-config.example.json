@@ -1,5 +1,33 @@
 {
-  "preset": "custom",
+  "_readme": [
+    "Standalone wallet-triggered bot. Copy to user-config.json and edit.",
+    "Every key is optional — omitted keys fall back to the defaults in config.js.",
+    "shadowMode: true forces DRY_RUN, so nothing is ever submitted; flip to false for live entries.",
+    "Legacy-only keys (LLM models, darwin*, hiveMind*, gmgn*, chartIndicators, category,",
+    "discord/pvp knobs, screeningIntervalMin, healthCheckIntervalMin) are unused in standalone",
+    "mode and are documented on the `legacy` branch."
+  ],
+
+  "standaloneEnabled": false,
+  "shadowMode": true,
+  "walletAddress": "",
+
+  "walletThreshold": 2,
+  "walletWindowSec": 120,
+  "screeningDeadlineSec": 120,
+  "screeningRetrySec": 15,
+  "walletReconcileSec": 30,
+  "minSmartWalletDepositSol": 0.1,
+  "maxEntryPriceMovePct": 5,
+  "walletSignalCooldownSec": 300,
+  "maxPendingWalletTransactions": 1000,
+  "walletGroups": {},
+
+  "monitorRpcUrl": "",
+  "monitorWsUrl": "",
+  "balanceRpcUrl": "",
+  "fallbackRpcUrl": "",
+
   "rpcUrl": "https://api.mainnet-beta.solana.com",
   "llmBaseUrl": "",
   "llmApiKey": "",
@@ -42,6 +70,8 @@
   "maxTokenAgeHours": null,
   "minClaimAmount": 5,
   "autoSwapAfterClaim": false,
+  "autoSwapRetryAttempts": 3,
+  "autoSwapRetryDelayMs": 3000,
   "autoSweepResidualTokens": false,
   "minAutoSweepUsd": 0.1,
   "maxAutoSweepFailures": 3,
@@ -87,7 +117,7 @@
   "publicApiKey": "",
   "agentMeridianApiUrl": "https://api.agentmeridian.xyz/api",
   "lpAgentRelayEnabled": false,
-  "pnlSource": "rpc",
+  "pnlSource": "meteora",
   "pnlRpcUrl": "https://api.mainnet-beta.solana.com",
   "pnlPollIntervalSec": 3,
   "pnlDepositCacheTtlSec": 300,

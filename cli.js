@@ -539,7 +539,7 @@ switch (subcommand) {
 
   // ── start ────────────────────────────────────────────────────────
   case "start": {
-    const { startCronJobs } = await import("./index.js");
+    const { startCronJobs } = await import("./legacy-index.js");
     process.stderr.write("[meridian] Starting autonomous agent...\n");
     startCronJobs();
     break;

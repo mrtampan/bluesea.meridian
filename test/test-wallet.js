@@ -7,9 +7,6 @@
 import { loadEnv } from "../envcrypt.js";
 import {
   getWalletBalances,
-  getWalletBalancesFromBirdeye,
-  getWalletBalancesFromAlchemy,
-  getShyftTokenBalance,
 } from "../tools/wallet.js";
 
 loadEnv();
@@ -35,25 +32,6 @@ async function main() {
     console.log(`\nWallet: ${walletAddress}`);
   } else {
     console.log("\nWallet not configured / balances returned null wallet");
-  }
-
-  // 2. Birdeye provider
-  if (walletAddress) {
-    dump("getWalletBalancesFromBirdeye()", await getWalletBalancesFromBirdeye(walletAddress));
-  }
-
-  // 3. Alchemy RPC provider
-  if (walletAddress) {
-    dump("getWalletBalancesFromAlchemy()", await getWalletBalancesFromAlchemy(walletAddress));
-  }
-
-  // 4. Per-token balance via Shyft
-  if (walletAddress) {
-    try {
-      dump("getShyftTokenBalance(SOL)", await getShyftTokenBalance(walletAddress, SOL_MINT));
-    } catch (err) {
-      dump("getShyftTokenBalance(SOL)", { error: err.message });
-    }
   }
 
   console.log("\n=== Wallet Tools Test Finished ===");
