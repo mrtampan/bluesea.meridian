@@ -5,7 +5,7 @@ import { repoPath } from "./repo-root.js";
 const USER_CONFIG_PATH = repoPath("user-config.json");
 
 const TOKEN = process.env.TELEGRAM_BOT_TOKEN || null;
-const BASE  = TOKEN ? `https://api.telegram.org/bot${TOKEN}` : null;
+const BASE = TOKEN ? `https://api.telegram.org/bot${TOKEN}` : null;
 const ALLOWED_USER_IDS = new Set(
   String(process.env.TELEGRAM_ALLOWED_USER_IDS || "")
     .split(",")
@@ -14,7 +14,7 @@ const ALLOWED_USER_IDS = new Set(
 );
 
 let chatId = null;
-let _offset  = 0;
+let _offset = 0;
 let _polling = false;
 let _liveMessageDepth = 0;
 let _warnedMissingChatId = false;
@@ -193,7 +193,7 @@ export function hasActiveLiveMessage() {
 
 function createTypingIndicator() {
   if (!TOKEN || !chatId) {
-    return { stop() {} };
+    return { stop() { } };
   }
 
   let stopped = false;
@@ -402,6 +402,8 @@ async function poll(onMessage) {
     } catch (e) {
       if (!e.message?.includes("aborted")) {
         log("telegram_error", `Poll error: ${e.message}`);
+        const detail = e.cause?.code || e.cause?.message || "";
+        log("telegram_error", `Poll error: ${e.message}${detail ? ` (${detail})` : ""}`);
       }
       await sleep(5000);
     }
@@ -409,27 +411,27 @@ async function poll(onMessage) {
 }
 
 const BOT_COMMANDS = [
-  { command: "help",       description: "Show commands" },
-  { command: "status",     description: "Wallet + positions snapshot" },
-  { command: "wallet",     description: "Wallet, deploy amount, HiveMind status" },
-  { command: "positions",  description: "List open positions" },
-  { command: "pool",       description: "Detailed info for one open position" },
-  { command: "close",      description: "Close one position by index" },
-  { command: "closeall",   description: "Close all open positions" },
-  { command: "set",        description: "Set note/instruction on position" },
-  { command: "config",     description: "Show important runtime config" },
-  { command: "settings",   description: "Button menu for common config" },
-  { command: "setcfg",     description: "Update persisted config key" },
-  { command: "screen",     description: "Refresh deterministic candidate list" },
+  { command: "help", description: "Show commands" },
+  { command: "status", description: "Wallet + positions snapshot" },
+  { command: "wallet", description: "Wallet, deploy amount, HiveMind status" },
+  { command: "positions", description: "List open positions" },
+  { command: "pool", description: "Detailed info for one open position" },
+  { command: "close", description: "Close one position by index" },
+  { command: "closeall", description: "Close all open positions" },
+  { command: "set", description: "Set note/instruction on position" },
+  { command: "config", description: "Show important runtime config" },
+  { command: "settings", description: "Button menu for common config" },
+  { command: "setcfg", description: "Update persisted config key" },
+  { command: "screen", description: "Refresh deterministic candidate list" },
   { command: "candidates", description: "Show latest cached candidates" },
-  { command: "deploy",     description: "Deploy candidate by cached index" },
-  { command: "briefing",   description: "Morning briefing" },
-  { command: "hive",       description: "HiveMind sync status" },
-  { command: "sweep",      description: "Manually sweep residual tokens to SOL" },
-  { command: "cleandust",  description: "Clean dust tokens to SOL (min $0.01)" },
-  { command: "pause",      description: "Stop cron cycles" },
-  { command: "resume",     description: "Start cron cycles again" },
-  { command: "stop",       description: "Shut down agent" },
+  { command: "deploy", description: "Deploy candidate by cached index" },
+  { command: "briefing", description: "Morning briefing" },
+  { command: "hive", description: "HiveMind sync status" },
+  { command: "sweep", description: "Manually sweep residual tokens to SOL" },
+  { command: "cleandust", description: "Clean dust tokens to SOL (min $0.01)" },
+  { command: "pause", description: "Stop cron cycles" },
+  { command: "resume", description: "Start cron cycles again" },
+  { command: "stop", description: "Shut down agent" },
 ];
 
 async function registerCommands() {

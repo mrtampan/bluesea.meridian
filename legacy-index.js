@@ -1417,6 +1417,11 @@ async function telegramHandler(msg) {
     return;
   }
 
+  if (text.trim().toLowerCase() === "/pool") {
+    await sendMessage("ℹ️ Usage: /pool <n>\nExample: /pool 1 (use /positions to see active positions)").catch(() => {});
+    return;
+  }
+
   const poolMatch = text.match(/^\/pool\s+(\d+)$/i);
   if (poolMatch) {
     try {
@@ -1437,6 +1442,11 @@ async function telegramHandler(msg) {
     } catch (e) {
       await sendMessage(`Error: ${e.message}`).catch(() => {});
     }
+    return;
+  }
+
+  if (text.trim().toLowerCase() === "/close") {
+    await sendMessage("ℹ️ Usage: /close <n>\nExample: /close 1 (use /positions to see position numbers, or /closeall)").catch(() => {});
     return;
   }
 
