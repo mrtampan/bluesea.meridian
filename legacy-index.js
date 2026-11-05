@@ -10,7 +10,7 @@ import { getWalletBalances } from "./tools/wallet.js";
 import { getTopCandidates, degenScore } from "./tools/screening.js";
 import { config, reloadScreeningThresholds, computeDeployAmount } from "./config.js";
 import { evolveThresholds, getPerformanceSummary } from "./lessons.js";
-import { executeTool, registerCronRestarter } from "./tools/executor.js";
+import { executeTool, registerCronRestarter, cleanDustTokens } from "./tools/executor.js";
 import {
   startPolling,
   stopPolling,
@@ -1241,6 +1241,7 @@ function formatHelpText() {
     "/briefing — morning briefing",
     "/hive — HiveMind sync status",
     "/hive pull — manual HiveMind pull now",
+    "/cleandust — manual clean dust tokens to SOL (min $0.01)",
     "/pause — stop cron cycles",
     "/resume — start cron cycles again",
     "/stop — shut down agent",
@@ -1561,6 +1562,44 @@ async function telegramHandler(msg) {
     return;
   }
 
+  if (text === "/cleandust" || text.startsWith("/cleandust") || text === "/clean_dust" || text.startsWith("/clean_dust") || text === "/dust" || text.startsWith("/dust")) {
+    try {
+      await sendMessage("🧹 Running clean dust tokens (min $0.01)...");
+      const result = await cleanDustTokens({ minUsd: 0.01 });
+      const { swept, skipped, failed, totalChecked } = result;
+      let msg = `<b>Clean Dust Token Results</b>\nMode: Manual (min $0.01)\nChecked: ${totalChecked} non-SOL token(s)\n\n`;
+
+      if (swept.length === 0 && skipped.length === 0 && failed.length === 0) {
+        msg += "No dust tokens found in wallet.";
+      } else {
+        if (swept.length > 0) {
+          msg += `✅ <b>Cleaned (${swept.length}):</b>\n`;
+          for (const s of swept) {
+            msg += `• ${s.symbol || s.mint.slice(0, 8)} ($${s.usd < 0.1 ? s.usd.toFixed(4) : s.usd.toFixed(2)})\n`;
+          }
+          msg += "\n";
+        }
+        if (skipped.length > 0) {
+          msg += `⚠️ <b>Skipped (${skipped.length}):</b>\n`;
+          for (const s of skipped) {
+            msg += `• ${s.symbol || s.mint.slice(0, 8)} ($${s.usd < 0.1 ? s.usd.toFixed(4) : s.usd.toFixed(2)}) — ${s.reason}\n`;
+          }
+          msg += "\n";
+        }
+        if (failed.length > 0) {
+          msg += `❌ <b>Failed (${failed.length}):</b>\n`;
+          for (const f of failed) {
+            msg += `• ${f.symbol || f.mint.slice(0, 8)} ($${f.usd < 0.1 ? f.usd.toFixed(4) : f.usd.toFixed(2)}) — ${f.error}\n`;
+          }
+        }
+      }
+      await sendHTML(msg);
+    } catch (e) {
+      await sendMessage(`Clean dust error: ${e.message}`).catch(() => {});
+    }
+    return;
+  }
+
   if (text === "/pause") {
     stopCronJobs();
     cronStarted = false;
@@ -1771,6 +1810,7 @@ Commands:
   /status        Refresh wallet + positions
   /candidates    Refresh top pool list
   /briefing      Show morning briefing (last 24h)
+  /cleandust     Manually clean dust non-SOL tokens to SOL (min $0.01)
   /learn         Study top LPers from the best current pool and save lessons
   /learn <addr>  Study top LPers from a specific pool address
   /thresholds    Show current screening thresholds + performance stats
@@ -1828,6 +1868,34 @@ Commands:
 
     // ── Slash commands ───────────────────────
     if (input === "/stop") { await shutdown("user command"); return; }
+
+    if (input === "/cleandust" || input === "cleandust" || input === "/clean_dust" || input === "clean_dust" || input === "/dust" || input === "dust") {
+      await runBusy(async () => {
+        console.log("\nRunning clean dust tokens (min $0.01)...\n");
+        const result = await cleanDustTokens({ minUsd: 0.01 });
+        const { swept, skipped, failed, totalChecked } = result;
+        console.log(`Checked: ${totalChecked} token(s)\n`);
+
+        if (!swept.length && !skipped.length && !failed.length) {
+          console.log("No dust tokens found in wallet.\n");
+        } else {
+          if (swept.length) {
+            console.log(`Cleaned (${swept.length}):`);
+            for (const s of swept) console.log(`  ✓ ${s.symbol || s.mint.slice(0, 8)} ($${s.usd < 0.1 ? s.usd.toFixed(4) : s.usd.toFixed(2)})`);
+          }
+          if (skipped.length) {
+            console.log(`\nSkipped (${skipped.length}):`);
+            for (const s of skipped) console.log(`  - ${s.symbol || s.mint.slice(0, 8)} ($${s.usd < 0.1 ? s.usd.toFixed(4) : s.usd.toFixed(2)}) — ${s.reason}`);
+          }
+          if (failed.length) {
+            console.log(`\nFailed (${failed.length}):`);
+            for (const f of failed) console.log(`  ✗ ${f.symbol || f.mint.slice(0, 8)} ($${f.usd < 0.1 ? f.usd.toFixed(4) : f.usd.toFixed(2)}) — ${f.error}`);
+          }
+          console.log();
+        }
+      });
+      return;
+    }
 
     if (input === "/status") {
       await runBusy(async () => {
