@@ -23,7 +23,7 @@ import { addToBlacklist, removeFromBlacklist, listBlacklist } from "../token-bla
 import { blockDev, unblockDev, listBlockedDevs } from "../dev-blocklist.js";
 import { addSmartWallet, removeSmartWallet, listSmartWallets, checkSmartWalletsOnPool } from "../smart-wallets.js";
 import { getTokenInfo, getTokenHolders, getTokenNarrative } from "./token.js";
-import { config, reloadScreeningThresholds, MIN_SAFE_BINS_BELOW } from "../config.js";
+import { config, reloadScreeningThresholds, MIN_SAFE_BINS_BELOW, getHeader } from "../config.js";
 import { getRecentDecisions } from "../decision-log.js";
 import fs from "fs";
 import { execSync, spawn } from "child_process";
@@ -656,6 +656,50 @@ async function swapBaseToSolWithRetry(baseMint, label) {
   return { swapped: false, result: null, token: null };
 }
 
+// In-memory cache for token symbols (mint -> symbol)
+const tokenSymbolCache = new Map();
+
+/**
+ * Resolve token symbol from Jupiter DatAPI with fallback to DexScreener.
+ */
+async function resolveTokenSymbol(mint) {
+  if (!mint) return null;
+  const cached = tokenSymbolCache.get(mint);
+  if (cached) return cached;
+
+  try {
+    const res = await fetch("https://datapi.jup.ag/v1/assets/search?query=" + encodeURIComponent(mint), {
+      headers: getHeader(),
+    });
+    if (res.ok) {
+      const assets = await res.json();
+      const asset = Array.isArray(assets) ? assets[0] : assets;
+      if (asset?.symbol) {
+        tokenSymbolCache.set(mint, asset.symbol);
+        return asset.symbol;
+      }
+    }
+  } catch {}
+
+  try {
+    const res = await fetch("https://api.dexscreener.com/latest/dex/tokens/" + mint, {
+      headers: getHeader(),
+    });
+    if (res.ok) {
+      const data = await res.json();
+      const sym = data?.pairs?.[0]?.baseToken?.symbol;
+      if (sym) {
+        tokenSymbolCache.set(mint, sym);
+        return sym;
+      }
+    }
+  } catch {}
+
+  const fallback = mint.slice(0, 8);
+  tokenSymbolCache.set(mint, fallback);
+  return fallback;
+}
+
 /**
  * Clean dust non-SOL tokens in wallet back to SOL.
  * Manual utility duplicated from swaptoken with minimum USD threshold default $0.01.
@@ -683,6 +727,10 @@ export async function cleanDustTokens({ minUsd = 0.01 } = {}) {
   for (const token of balances.tokens) {
     if (!token.mint || token.mint === SOL_MINT || token.mint === NATIVE_SOL_MINT || token.mint === "SOL") continue;
     if (token.symbol === "USDC" || token.symbol === "USDT") continue;
+
+    if (!token.symbol || token.symbol === token.mint.slice(0, 8)) {
+      token.symbol = await resolveTokenSymbol(token.mint);
+    }
 
     totalChecked++;
     const usdVal = Number(token.usd ?? 0);
