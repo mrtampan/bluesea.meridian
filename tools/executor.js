@@ -283,8 +283,6 @@ const toolMap = {
   close_position: closePosition,
   get_wallet_balance: getWalletBalances,
   swap_token: swapToken,
-  sweep_residual_tokens: sweepResidualTokens,
-  sweep: sweepResidualTokens,
   clean_dust: cleanDustTokens,
   clean_dust_tokens: cleanDustTokens,
   get_top_lpers: studyTopLPers,
@@ -397,9 +395,6 @@ const toolMap = {
       autoSwapAfterClaim: ["management", "autoSwapAfterClaim"],
       autoSwapRetryAttempts: ["management", "autoSwapRetryAttempts"],
       autoSwapRetryDelayMs: ["management", "autoSwapRetryDelayMs"],
-      autoSweepResidualTokens: ["management", "autoSweepResidualTokens"],
-      minAutoSweepUsd: ["management", "minAutoSweepUsd"],
-      maxAutoSweepFailures: ["management", "maxAutoSweepFailures"],
       outOfRangeBinsToClose: ["management", "outOfRangeBinsToClose"],
       outOfRangeWaitMinutes: ["management", "outOfRangeWaitMinutes"],
       oorCooldownTriggerCount: ["management", "oorCooldownTriggerCount"],
@@ -661,102 +656,9 @@ async function swapBaseToSolWithRetry(baseMint, label) {
   return { swapped: false, result: null, token: null };
 }
 
-// Track consecutive failed sweep attempts per token mint so unswappable/dead tokens don't loop endlessly
-const residualSweepFailures = new Map();
-
-/**
- * Sweep leftover non-SOL tokens in wallet back to SOL.
- * Runs during management cycle when config.management.autoSweepResidualTokens is true,
- * or manually when forced.
- */
-export async function sweepResidualTokens({ force = false } = {}) {
-  const autoSweepEnabled = !!config.management.autoSweepResidualTokens;
-  if (!force && !autoSweepEnabled) {
-    return { swept: [], skipped: [], failed: [], totalChecked: 0, autoSweepEnabled };
-  }
-  const minUsd = Math.max(0.10, Number(config.management.minAutoSweepUsd ?? 0.50));
-  const maxFailures = Math.max(1, Number(config.management.maxAutoSweepFailures ?? 3));
-  const SOL_MINT = "So11111111111111111111111111111111111111112";
-  const NATIVE_SOL_MINT = "So11111111111111111111111111111111111111111";
-
-  const balances = await getWalletBalances({}).catch((e) => {
-    log("executor_warn", `Residual sweep balance fetch failed: ${e.message}`);
-    return null;
-  });
-
-  if (!balances || !Array.isArray(balances.tokens) || balances.tokens.length === 0) {
-    return { swept: [], skipped: [], failed: [], totalChecked: 0, autoSweepEnabled };
-  }
-
-  const swept = [];
-  const skipped = [];
-  const failed = [];
-  let totalChecked = 0;
-
-  for (const token of balances.tokens) {
-    if (!token.mint || token.mint === SOL_MINT || token.mint === NATIVE_SOL_MINT || token.mint === "SOL") continue;
-    if (token.symbol === "USDC" || token.symbol === "USDT") continue;
-
-    totalChecked++;
-    const usdVal = Number(token.usd ?? 0);
-    if (usdVal < minUsd) {
-      skipped.push({
-        mint: token.mint,
-        symbol: token.symbol,
-        usd: usdVal,
-        reason: `Value ($${usdVal.toFixed(2)}) below minimum threshold ($${minUsd.toFixed(2)})`,
-      });
-      continue;
-    }
-
-    const failedCount = residualSweepFailures.get(token.mint) || 0;
-    if (!force && failedCount >= maxFailures) {
-      log("executor_warn", `Skipping residual sweep for ${token.symbol || token.mint.slice(0, 8)}: failed ${failedCount} consecutive cycles`);
-      skipped.push({
-        mint: token.mint,
-        symbol: token.symbol,
-        usd: usdVal,
-        reason: `Failed ${failedCount} consecutive cycles (max ${maxFailures})`,
-      });
-      continue;
-    }
-
-    log("executor", `Residual sweep detected leftover token ${token.symbol || token.mint.slice(0, 8)} ($${usdVal.toFixed(2)}) — attempting swap to SOL`);
-    let swapResult = null;
-    let lastErr = null;
-    try {
-      swapResult = await swapToken({ input_mint: token.mint, output_mint: "SOL", amount: token.balance });
-    } catch (e) {
-      lastErr = e.message;
-    }
-    const ok = swapResult && swapResult.success !== false && !swapResult.error && (swapResult.tx || swapResult.amount_out || swapResult.dry_run);
-
-    if (ok) {
-      residualSweepFailures.delete(token.mint);
-      swept.push({
-        mint: token.mint,
-        symbol: token.symbol,
-        usd: usdVal,
-        tx: swapResult?.tx || swapResult?.amount_out || (swapResult?.dry_run ? "dry_run" : null),
-      });
-    } else {
-      const err = lastErr || swapResult?.error || swapResult?.reason || "Swap failed or returned no transaction";
-      residualSweepFailures.set(token.mint, failedCount + 1);
-      failed.push({
-        mint: token.mint,
-        symbol: token.symbol,
-        usd: usdVal,
-        error: err,
-      });
-    }
-  }
-
-  return { swept, skipped, failed, totalChecked, autoSweepEnabled };
-}
-
 /**
  * Clean dust non-SOL tokens in wallet back to SOL.
- * Manual utility duplicated from sweepResidualTokens with minimum USD threshold default $0.01.
+ * Manual utility duplicated from swaptoken with minimum USD threshold default $0.01.
  * Only run manually via Telegram or CLI/command prompt.
  */
 export async function cleanDustTokens({ minUsd = 0.01 } = {}) {

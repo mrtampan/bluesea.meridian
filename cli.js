@@ -95,12 +95,6 @@ Swaps tokens via Jupiter. Use "SOL" as mint shorthand.
 Output: { success, tx, input_amount, output_amount }
 \`\`\`
 
-### meridian sweep [--dry-run]
-Manually sweeps leftover non-SOL tokens in wallet back to SOL.
-\`\`\`
-Output: { swept, skipped, failed, totalChecked, autoSweepEnabled }
-\`\`\`
-
 ### meridian clean-dust [--dry-run]
 Manually cleans dust non-SOL tokens in wallet back to SOL (min $0.01).
 \`\`\`
@@ -680,13 +674,6 @@ switch (subcommand) {
       strategy: flags.strategy || "spot",
       single_sided_x: argv.includes("--single-sided-x"),
     }));
-    break;
-  }
-
-  // ── sweep ──────────────────────────────────────────────────────
-  case "sweep": {
-    const { sweepResidualTokens } = await import("./tools/executor.js");
-    out(await sweepResidualTokens({ force: true }));
     break;
   }
 
